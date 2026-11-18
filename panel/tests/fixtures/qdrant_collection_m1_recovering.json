@@ -1,0 +1,28 @@
+{
+  "result": {
+    "peer_id": 2738916503459183011,
+    "shard_count": 6,
+    "local_shards": [
+      {"shard_id": 0, "points_count": 2900, "state": "Active"},
+      {"shard_id": 2, "points_count": 2902, "state": "Active"},
+      {"shard_id": 3, "points_count": 2903, "state": "Active"},
+      {"shard_id": 5, "points_count": 2905, "state": "Active"}
+    ],
+    "remote_shards": [
+      {"shard_id": 0, "peer_id": 11635047302187392211, "state": "Active"},
+      {"shard_id": 1, "peer_id": 11635047302187392211, "state": "Partial"},
+      {"shard_id": 1, "peer_id": 6029477265530419423, "state": "Active"},
+      {"shard_id": 2, "peer_id": 6029477265530419423, "state": "Active"},
+      {"shard_id": 3, "peer_id": 11635047302187392211, "state": "Dead"},
+      {"shard_id": 4, "peer_id": 11635047302187392211, "state": "Partial"},
+      {"shard_id": 4, "peer_id": 6029477265530419423, "state": "Active"},
+      {"shard_id": 5, "peer_id": 6029477265530419423, "state": "Active"}
+    ],
+    "shard_transfers": [
+      {"shard_id": 1, "from": 6029477265530419423, "to": 11635047302187392211, "sync": true,
+       "method": "stream_records", "comment": "Transferring records (1200/2900), started 3s ago, ETA: 4.31s"}
+    ]
+  },
+  "status": "ok",
+  "time": 0.00023
+}

@@ -1,0 +1,43 @@
+# Вопросы для генератора нагрузки: по одному на строку, идут по кругу.
+# Тема — как у набора LegalBench-RAG-mini (политики приватности, NDA, слияния, договоры).
+# Строки с # и пустые строки пропускаются.
+Does the app share my location data with third parties?
+Can I ask the company to delete my personal data?
+Does the service use cookies to track me across other websites?
+Is my information sold to advertisers?
+How long is my personal information retained?
+Will I be notified if the privacy policy changes?
+Does the app collect data from children under 13?
+Can the company access my contacts list?
+Is my data transferred outside my country?
+Does the policy allow sharing data with law enforcement without a warrant?
+Shall the receiving party notify the disclosing party of a compelled disclosure?
+Does the agreement allow the receiving party to share information with its employees?
+Are oral disclosures covered as confidential information?
+Must confidential information be returned or destroyed when the agreement ends?
+Does the agreement grant any license to the disclosed information?
+May the receiving party independently develop similar information?
+Is the receiving party allowed to reverse engineer the materials?
+Does the confidentiality obligation survive termination of the agreement?
+What is the definition of a Material Adverse Effect in the merger agreement?
+Does the target have a go-shop period after signing?
+Under what conditions can the board change its recommendation?
+What termination fee is payable if the target accepts a superior proposal?
+Is the buyer's obligation conditioned on obtaining financing?
+How are pandemic effects treated in the Material Adverse Effect definition?
+Does the agreement require the target to operate in the ordinary course before closing?
+Is there a non-compete clause restricting the distributor after termination?
+Which law governs the agreement?
+Can either party assign the contract without the other party's consent?
+Is there a cap on liability for breach of contract?
+Does the contract contain an exclusivity provision?
+What happens if the licensee undergoes a change of control?
+Is there a minimum purchase commitment?
+Does the agreement renew automatically at the end of the term?
+How much notice is required to terminate for convenience?
+Are there audit rights for the licensor?
+Who owns the intellectual property created under the agreement?
+Is there a most favored nation clause?
+Does the contract include a warranty duration?
+Are uncapped damages available for breach of confidentiality?
+Can the agreement be terminated if the other party becomes insolvent?

@@ -1,0 +1,20 @@
+{
+  "result": {
+    "status": "enabled",
+    "peer_id": 6029477265530419423,
+    "peers": {
+      "2738916503459183011": {"uri": "http://qdrant-0.qdrant-headless:6335/"},
+      "11635047302187392211": {"uri": "http://qdrant-1.qdrant-headless:6335/"},
+      "6029477265530419423": {"uri": "http://qdrant-2.qdrant-headless:6335/"}
+    },
+    "raft_info": {"term": 7, "commit": 4100, "pending_operations": 0, "leader": 2738916503459183011,
+                  "role": "Follower", "is_voter": true},
+    "consensus_thread_status": {"consensus_thread_status": "working", "last_update": "2026-11-18T10:06:30.950000Z"},
+    "message_send_failures": {
+      "http://qdrant-1.qdrant-headless:6335/": {"count": 377, "latest_error": "Failed to send message: deadline has elapsed",
+                                                "latest_error_timestamp": "2026-11-18T10:06:30.500000Z"}
+    }
+  },
+  "status": "ok",
+  "time": 0.000011
+}

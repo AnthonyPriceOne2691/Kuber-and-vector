@@ -1,0 +1,25 @@
+{
+  "result": {
+    "peer_id": 6029477265530419423,
+    "shard_count": 6,
+    "local_shards": [
+      {"shard_id": 1, "points_count": 2901, "state": "Active"},
+      {"shard_id": 2, "points_count": 2902, "state": "Active"},
+      {"shard_id": 4, "points_count": 2904, "state": "Active"},
+      {"shard_id": 5, "points_count": 2905, "state": "Active"}
+    ],
+    "remote_shards": [
+      {"shard_id": 0, "peer_id": 2738916503459183011, "state": "Active"},
+      {"shard_id": 0, "peer_id": 11635047302187392211, "state": "Dead"},
+      {"shard_id": 1, "peer_id": 11635047302187392211, "state": "Active"},
+      {"shard_id": 2, "peer_id": 2738916503459183011, "state": "Active"},
+      {"shard_id": 3, "peer_id": 2738916503459183011, "state": "Active"},
+      {"shard_id": 3, "peer_id": 11635047302187392211, "state": "Dead"},
+      {"shard_id": 4, "peer_id": 11635047302187392211, "state": "Active"},
+      {"shard_id": 5, "peer_id": 2738916503459183011, "state": "Active"}
+    ],
+    "shard_transfers": []
+  },
+  "status": "ok",
+  "time": 0.00019
+}

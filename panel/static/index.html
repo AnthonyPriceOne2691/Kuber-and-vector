@@ -1,0 +1,1032 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stand Panel</title>
+<meta name="color-scheme" content="dark">
+<style>
+/* Панель стенда «Kubernetes + Qdrant». Сцена 1920×1080 масштабируется под окно целиком.
+   Цвета — токены: машины — первые слоты категориальной палитры (проверены на различимость
+   при дальтонизме), статусы — отдельная зарезервированная шкала, всегда со значком и словом. */
+:root {
+  color-scheme: dark;
+  --page: #0b0e13;
+  --surface: #131820;
+  --surface-2: #1a2029;
+  --surface-3: #232a35;
+  --hairline: #252c37;
+  --grid: #222933;
+  --axis: #3a4350;
+  --ink: #eef1f5;
+  --ink-2: #b9c1cd;
+  --muted: #818a99;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --p95: #8792a4;
+  --sans: system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--page); overflow: hidden; }
+body { color: var(--ink); font: 400 18px/1.3 var(--sans); -webkit-font-smoothing: antialiased; }
+[hidden] { display: none !important; }
+.still *, .still *::before, .still *::after { transition: none !important; animation: none !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+#stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0;
+  padding: 22px 28px 16px; display: grid; grid-template-rows: 62px 1fr 26px; row-gap: 16px; }
+
+/* --- шапка --- */
+header { display: flex; align-items: center; justify-content: space-between; min-width: 0; }
+.title { font-size: 31px; font-weight: 650; letter-spacing: -0.01em; }
+.subtitle { font-size: 16px; color: var(--ink-2); margin-top: 3px; }
+.hdr-right { display: flex; align-items: center; gap: 24px; }
+.sources { display: flex; gap: 16px; font-size: 14px; color: var(--muted); }
+.sources span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--axis); margin-right: 7px; vertical-align: 1px; transition: background-color .6s; }
+.sources span.ok::before { background: var(--good); }
+.sources span.warn::before { background: var(--warning); }
+.sources span.bad::before { background: var(--critical); }
+.sim { font-size: 13px; font-weight: 700; letter-spacing: .14em; color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent); padding: 6px 11px; border-radius: 7px; }
+.sim::before { content: "▲"; color: var(--warning); margin-right: 8px; font-size: 11px; vertical-align: 1px; }
+.clock { font: 500 25px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+main { display: grid; grid-template-columns: 1fr 560px; column-gap: 20px; min-height: 0; }
+.left { display: grid; grid-template-rows: 178px 262px 242px 192px; row-gap: 16px; min-height: 0; min-width: 0; }
+.right { display: grid; grid-template-rows: 362px 1fr; row-gap: 16px; min-height: 0; }
+.card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 14px; min-height: 0;
+  min-width: 0; position: relative; overflow: hidden; }
+.label { font-size: 13px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.note { font-size: 14px; color: var(--muted); white-space: nowrap; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+
+/* --- плитки с числами --- */
+.kpis { display: grid; grid-template-columns: 254px 232px 232px 1fr; column-gap: 16px; min-height: 0; }
+.tile { padding: 16px 20px 14px; display: flex; flex-direction: column; }
+.value { font-size: 64px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; margin-top: 12px;
+  /* живые числа: цифры одной ширины, чтобы число не дрожало от обновления к обновлению */
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.value .u { font-size: 21px; font-weight: 500; color: var(--ink-2); margin-left: 7px; letter-spacing: 0; }
+.tile .foot { margin-top: auto; display: flex; align-items: center; gap: 10px; min-height: 26px; }
+canvas.spark { display: block; width: 100%; height: 34px; margin-top: auto; }
+.chip-st { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; color: var(--ink);
+  padding: 3px 10px 3px 8px; border-radius: 999px; background: var(--surface-3); white-space: nowrap;
+  transition: background-color .6s; }
+.chip-st i { font-style: normal; font-size: 12px; color: var(--muted); }
+.chip-st.good { background: color-mix(in srgb, var(--good) 22%, var(--surface)); } .chip-st.good i { color: var(--good); }
+.chip-st.warn { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); } .chip-st.warn i { color: var(--warning); }
+.chip-st.bad { background: color-mix(in srgb, var(--critical) 28%, var(--surface)); } .chip-st.bad i { color: #ff7b7b; }
+.errors { display: grid; grid-template-columns: 1fr 1px 1fr; column-gap: 20px; padding: 16px 20px 14px; }
+.errors .half { display: flex; flex-direction: column; min-width: 0; }
+.errors .sep { background: var(--hairline); margin: 4px 0; }
+.errors .sub { font-size: 14px; color: var(--muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- график --- */
+.chart { padding: 14px 18px 8px; display: flex; flex-direction: column; }
+.legend { display: flex; gap: 18px; font-size: 14px; color: var(--ink-2); white-space: nowrap; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { display: inline-block; width: 18px; height: 2px; border-radius: 1px; background: var(--ink); }
+.legend i.p95 { background: var(--p95); }
+.legend i.bar { width: 8px; height: 12px; border-radius: 2px; background: var(--warning); }
+.legend i.band { width: 16px; height: 12px; border-radius: 3px; background: var(--muted); opacity: .45; }
+.plot-wrap { position: relative; flex: 1; min-height: 0; margin-top: 6px; }
+canvas.plot { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-3); border: 1px solid var(--axis);
+  border-radius: 8px; padding: 8px 11px; font-size: 13px; line-height: 1.45; color: var(--ink-2); white-space: nowrap; }
+.tip b { color: var(--ink); font-weight: 600; }
+
+/* --- машины --- */
+.machines { display: grid; grid-template-rows: 22px 1fr; row-gap: 8px; min-height: 0; }
+.mgrid { display: grid; grid-template-columns: repeat(4, 1fr); column-gap: 16px; min-height: 0; }
+.machine { --mc: var(--muted); padding: 15px 16px 12px; display: flex; flex-direction: column;
+  transition: border-color .9s, box-shadow .9s; }
+.machine::before { content: ""; position: absolute; left: 0; top: 0; right: 0; height: 4px; background: var(--mc); }
+.machine.down { border-color: color-mix(in srgb, var(--warning) 45%, var(--hairline)); }
+.machine.notready { border-color: color-mix(in srgb, var(--critical) 60%, var(--hairline));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--critical) 35%, transparent), 0 0 28px color-mix(in srgb, var(--critical) 18%, transparent); }
+.m-name { font-size: 23px; font-weight: 650; display: flex; align-items: center; gap: 9px; white-space: nowrap; }
+.m-name::before { content: ""; width: 11px; height: 11px; border-radius: 3px; background: var(--mc); flex: none; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 650; padding: 4px 11px 4px 9px;
+  border-radius: 999px; white-space: nowrap; background: var(--surface-3); color: var(--ink); transition: background-color .7s; }
+.pill i { font-style: normal; font-size: 12px; }
+.pill.good { background: color-mix(in srgb, var(--good) 22%, var(--surface)); } .pill.good i { color: var(--good); }
+.pill.warn { background: color-mix(in srgb, var(--warning) 22%, var(--surface)); } .pill.warn i { color: var(--warning); }
+.pill.bad { background: color-mix(in srgb, var(--critical) 32%, var(--surface)); } .pill.bad i { color: #ff7b7b; }
+.pill.neutral i, .pill.muted i { color: var(--muted); }
+.m-meta { font-size: 14px; color: var(--muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-hb { font-size: 14px; color: var(--ink-2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-hb i { font-style: normal; margin-right: 6px; color: var(--muted); }
+.m-hb.warn i { color: var(--warning); } .m-hb.bad i { color: #ff7b7b; }
+.pods { margin-top: 10px; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.chip-wrap { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .6s ease, opacity .6s ease; }
+.chip-wrap.hide { grid-template-rows: 0fr; opacity: 0; }
+.chip { min-height: 0; overflow: hidden; }
+.chip-in { display: flex; align-items: center; gap: 8px; height: 34px; margin-bottom: 6px; padding: 0 10px;
+  background: var(--surface-2); border-radius: 8px; font-size: 16px; transition: box-shadow 1.2s, opacity .8s; }
+.chip-wrap.new .chip-in { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--good) 75%, transparent); }
+.chip-wrap.terminating .chip-in { opacity: .55; }
+.chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; transition: background-color .6s; }
+.chip .dot.ready { background: var(--good); }
+.chip .dot.starting, .chip .dot.notready { background: var(--warning); }
+.chip .dot.starting { animation: breathe 1.8s ease-in-out infinite; }
+.chip .dot.failed { background: var(--critical); }
+.chip .app { font-weight: 600; }
+.chip .id { font: 14px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.chip .st { margin-left: auto; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.svc { display: flex; align-items: center; gap: 9px; height: 34px; margin-bottom: 6px; padding: 0 10px;
+  background: var(--surface-2); border-radius: 8px; font-size: 16px; }
+.svc i { font-style: normal; font-size: 13px; width: 14px; text-align: center; }
+.svc i.ok { color: var(--good); } .svc i.bad { color: #ff7b7b; } .svc i.na { color: var(--muted); }
+.svc span { white-space: nowrap; flex: none; }
+.svc .d { margin-left: auto; flex: 0 1 auto; min-width: 0; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-foot { margin-top: 6px; font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px;
+  white-space: nowrap; }
+.m-foot .q { overflow: hidden; text-overflow: ellipsis; }
+.m-foot .q.bad::before { content: "✕ "; color: #ff7b7b; }
+.m-foot .q.warn::before { content: "▲ "; color: var(--warning); }
+.machine.observer .m-name { color: var(--ink-2); }
+.machine.observer .m-hb, .machine.observer .m-foot { display: none; }
+.pods.dense .chip-in { height: 27px; margin-bottom: 4px; font-size: 14px; }
+.legend b { font-weight: 400; }
+
+/* --- карта Qdrant --- */
+.qdrant { padding: 14px 18px 14px; display: flex; flex-direction: column; }
+.qlegend { display: flex; gap: 14px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.qlegend span { display: inline-flex; align-items: center; gap: 6px; }
+.qlegend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.qgrid { display: grid; gap: 6px; margin-top: 10px; align-items: center; }
+.qcol { font-size: 13px; color: var(--muted); text-align: center; }
+.qrow { display: flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 600; white-space: nowrap; min-width: 0; }
+.qrow::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--mc, var(--muted)); flex: none; }
+.qrow small { font-size: 12px; font-weight: 600; color: var(--muted); }
+.qrow small.bad { color: #ff9a9a; }
+.cell { position: relative; height: 32px; border-radius: 7px; display: flex; align-items: center; justify-content: center;
+  gap: 6px; font-size: 14px; font-weight: 600; color: var(--ink); background: var(--surface-2); overflow: hidden;
+  transition: background-color .8s; }
+.cell span, .cell i { position: relative; }
+.cell i { font-style: normal; font-size: 12px; }
+.cell .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  background: color-mix(in srgb, var(--good) 34%, transparent); transition: width .9s linear; }
+.cell.none { background: transparent; box-shadow: inset 0 0 0 1px var(--hairline); color: var(--muted); }
+.cell.active, i.active { background: color-mix(in srgb, var(--good) 27%, var(--surface)); } .cell.active i { color: var(--good); }
+.cell.partial, i.partial { background: color-mix(in srgb, var(--warning) 28%, var(--surface)); } .cell.partial i { color: var(--warning); }
+.cell.recovering, i.recovering { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); } .cell.recovering i { color: var(--warning); }
+.cell.dead, i.dead { background: color-mix(in srgb, var(--critical) 38%, var(--surface)); } .cell.dead i { color: #ff8a8a; }
+.cell.offline, i.offline { background: color-mix(in srgb, var(--critical) 17%, var(--surface)); } .cell.offline i { color: #ff8a8a; }
+.cell.offline span { color: var(--ink-2); }
+.cell.listener, .cell.unknown { background: var(--surface-3); }
+.qempty { margin: auto; font-size: 16px; color: var(--muted); }
+
+/* --- сбой и восстановление --- */
+.incident { padding: 18px 22px 14px; display: flex; flex-direction: column; }
+.inc-tag { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 650; color: var(--ink-2); }
+.inc-tag::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--mc, var(--muted)); }
+.inc-hero { display: flex; align-items: flex-end; gap: 16px; margin-top: 14px; min-height: 70px; }
+.inc-big { font-size: 68px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.inc-big .u { font-size: 24px; font-weight: 500; color: var(--ink-2); margin-left: 6px; letter-spacing: 0; }
+.inc-cap { font-size: 17px; color: var(--ink-2); line-height: 1.3; padding-bottom: 6px; }
+.inc-sub { font-size: 14px; color: var(--muted); margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 18px; }
+.steps { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
+.step { display: flex; align-items: center; gap: 12px; height: 29px; font-size: 17px; color: var(--muted); transition: color .7s; }
+.step .ic { width: 22px; height: 22px; border-radius: 50%; box-shadow: inset 0 0 0 2px var(--axis); display: grid;
+  place-items: center; font-size: 12px; font-weight: 700; color: transparent; flex: none; transition: background-color .7s, box-shadow .7s, color .7s; }
+.step.done { color: var(--ink); }
+.step.done .ic { background: var(--good); box-shadow: none; color: #fff; }
+.step.current .ic { box-shadow: inset 0 0 0 2px var(--warning); animation: breathe 1.8s ease-in-out infinite; }
+.step .off { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.inc-foot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--hairline); font-size: 14px; color: var(--muted);
+  display: flex; gap: 16px; white-space: nowrap; }
+.inc-foot b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* --- лента событий --- */
+.events { padding-top: 16px; display: flex; flex-direction: column; }
+.events .row { padding: 0 20px; }
+.ev-list { flex: 1; min-height: 0; overflow: hidden; margin-top: 10px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 82%, transparent); mask-image: linear-gradient(to bottom, #000 82%, transparent); }
+.ev-wrap { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .55s ease, opacity .55s ease; }
+.ev-wrap.hide { grid-template-rows: 0fr; opacity: 0; }
+.ev { min-height: 0; overflow: hidden; }
+.ev-in { display: grid; grid-template-columns: 66px 18px 1fr; column-gap: 10px; padding: 9px 20px 10px; border-top: 1px solid var(--hairline); }
+.ev-time { font: 13px/1.35 var(--mono); color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }
+.ev-time b { display: block; font-weight: 500; color: var(--ink-2); }
+.ev-ic { font-size: 14px; padding-top: 2px; text-align: center; color: var(--muted); }
+.ev-ic.ok { color: var(--good); } .ev-ic.warn { color: var(--warning); } .ev-ic.error { color: #ff7b7b; }
+.ev-body { min-width: 0; }
+.ev-title { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 600; min-width: 0; }
+.ev-title .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ev-title .n { font-size: 13px; color: var(--muted); font-weight: 600; flex: none; }
+.tag { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--ink-2); background: var(--surface-2); padding: 2px 8px 2px 7px; border-radius: 5px; }
+.tag::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--tc, var(--muted)); }
+.ev-detail { font-size: 14px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-wrap.fresh .ev-in { background: color-mix(in srgb, var(--ink) 4%, transparent); transition: background-color 3s; }
+
+footer { display: flex; justify-content: space-between; align-items: center; font-size: 15px; color: var(--muted); white-space: nowrap; }
+.banner { position: absolute; left: 50%; top: 92px; transform: translateX(-50%); background: var(--surface-3);
+  border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--hairline)); border-radius: 10px; padding: 10px 18px;
+  font-size: 16px; color: var(--ink); z-index: 5; }
+.banner::before { content: "▲ "; color: var(--warning); }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <header>
+    <div>
+      <div class="title" id="title">Kubernetes + Qdrant</div>
+      <div class="subtitle" id="subtitle">Connecting…</div>
+    </div>
+    <div class="hdr-right">
+      <div class="sources" id="sources"></div>
+      <div class="sim" id="sim" hidden>SIMULATED DATA</div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <main>
+    <div class="left">
+      <section class="kpis">
+        <div class="card tile">
+          <div class="row"><span class="label">Throughput</span><span class="note" id="qps-note"></span></div>
+          <div class="value"><span id="qps">—</span><span class="u">req/s</span></div>
+          <canvas class="spark" id="spark"></canvas>
+        </div>
+        <div class="card tile">
+          <div class="row"><span class="label">Latency p95</span></div>
+          <div class="value"><span id="p95">—</span><span class="u" id="p95-u">ms</span></div>
+          <div class="foot"><span class="note" id="p95-note">10 s window</span></div>
+        </div>
+        <div class="card tile">
+          <div class="row"><span class="label">Latency p99</span></div>
+          <div class="value"><span id="p99">—</span><span class="u" id="p99-u">ms</span></div>
+          <div class="foot" id="p99-foot"><span class="note">10 s window</span></div>
+        </div>
+        <div class="card errors">
+          <div class="half">
+            <div class="row"><span class="label">Errors · with retry</span></div>
+            <div class="value" id="err-wr">—</div>
+            <div class="foot"><span class="chip-st" id="err-wr-chip"><i>●</i><span>—</span></span></div>
+            <div class="sub" id="err-wr-sub"></div>
+          </div>
+          <div class="sep"></div>
+          <div class="half">
+            <div class="row"><span class="label">Errors · without retry</span></div>
+            <div class="value" id="err-wo">—</div>
+            <div class="foot"><span class="chip-st" id="err-wo-chip"><i>●</i><span>—</span></span></div>
+            <div class="sub" id="err-wo-sub"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card chart">
+        <div class="row">
+          <span><span class="label">Latency · last 3 minutes</span> <span class="note" id="serving"></span></span>
+          <div class="legend" id="legend">
+            <span><i></i>p99</span>
+            <span><i class="p95"></i>p95</span>
+            <span><i class="bar"></i>failed first attempts</span>
+            <span id="legend-band" hidden><i class="band" id="legend-band-i"></i><b id="legend-band-t"></b></span>
+          </div>
+        </div>
+        <div class="plot-wrap" id="plot-wrap">
+          <canvas class="plot" id="plot"></canvas>
+          <div class="tip" id="tip" hidden></div>
+        </div>
+      </section>
+
+      <section class="machines">
+        <div class="row"><span class="label">Machines</span><span class="note" id="kube-note"></span></div>
+        <div class="mgrid" id="mgrid"></div>
+      </section>
+
+      <section class="card qdrant">
+        <div class="row">
+          <span><span class="label">Qdrant · shard × machine</span> <span class="note" id="q-note"></span></span>
+          <div class="qlegend">
+            <span><i class="active"></i>Active</span>
+            <span><i class="recovering"></i>Recovering</span>
+            <span><i class="partial"></i>Partial</span>
+            <span><i class="dead"></i>Dead</span>
+            <span><i class="offline"></i>Offline</span>
+          </div>
+        </div>
+        <div class="qgrid" id="qgrid"></div>
+        <div class="qempty" id="qempty" hidden>Qdrant source not connected</div>
+      </section>
+    </div>
+
+    <div class="right">
+      <section class="card incident" id="incident">
+        <div class="row">
+          <span class="label">Failover</span>
+          <span class="inc-tag" id="inc-tag" hidden></span>
+          <span class="chip-st" id="inc-phase"><i>●</i><span>—</span></span>
+        </div>
+        <div class="inc-hero">
+          <div class="inc-big" id="inc-big">—</div>
+          <div class="inc-cap" id="inc-cap"></div>
+        </div>
+        <div class="inc-sub" id="inc-sub"></div>
+        <div class="steps" id="steps"></div>
+        <div class="inc-foot" id="inc-foot"></div>
+      </section>
+
+      <section class="card events">
+        <div class="row"><span class="label">Events</span><span class="note" id="ev-note"></span></div>
+        <div class="ev-list" id="ev-list"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <span id="caption">3 VMs + observer on one laptop · numbers for this hardware</span>
+    <span id="foot-right"></span>
+  </footer>
+  <div class="banner" id="banner" hidden>Panel server not responding — showing last data</div>
+</div>
+<script>
+// Панель: раз в секунду берёт /api/state и обновляет только изменившееся. Весь текст из данных —
+// через textContent (никакого innerHTML): строки событий приходят и снаружи (POST /api/event).
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const params = new URLSearchParams(location.search);
+  const STILL = params.has("still") || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (STILL) document.documentElement.classList.add("still");
+  const STEP_SHORT = { lost: "lost", notready: "NotReady", moved: "pods moved", back: "back", recovered: "in sync" };
+
+  // --- сцена 1920×1080 целиком в окне ---------------------------------------------------
+  const stage = $("#stage");
+  let scale = 1;
+  function fit() {
+    scale = Math.min(innerWidth / 1920, innerHeight / 1080) || 1;
+    const x = (innerWidth - 1920 * scale) / 2, y = (innerHeight - 1080 * scale) / 2;
+    stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }
+  addEventListener("resize", fit);
+  fit();
+
+  // --- помощники ------------------------------------------------------------------------
+  function h(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function setText(el, t) { t = t == null ? "" : String(t); if (el.textContent !== t) el.textContent = t; }
+  function setClass(el, c) { if (el.className !== c) el.className = c; }
+  const nf = new Intl.NumberFormat("en-US");
+  const fmtInt = (n) => (n == null ? "—" : nf.format(Math.round(n)));
+  function latParts(ms) {
+    if (ms == null || !isFinite(ms)) return ["—", "ms"];
+    if (ms >= 1000) return [(ms / 1000).toFixed(ms >= 10000 ? 1 : 2), "s"];
+    return [ms < 10 ? ms.toFixed(1) : ms.toFixed(0), "ms"];
+  }
+  const fmtMs = (ms) => (ms == null ? "—" : latParts(ms).join(" "));
+  function fmtAge(s) {
+    if (s == null) return "—";
+    s = Math.max(0, s);
+    if (s < 90) return `${Math.floor(s)} s`;
+    if (s < 5400) return `${Math.round(s / 60)} min`;
+    return `${Math.round(s / 3600)} h`;
+  }
+  function fmtDur(s) {
+    if (s == null) return "—";
+    s = Math.max(0, s);
+    return s < 600 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`;
+  }
+  function fmtTimer(s) { s = Math.max(0, Math.floor(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+  const fmtClock = (ts) => new Date(ts * 1000).toLocaleTimeString("en-GB", { hour12: false });
+  function hexA(hex, a) {
+    const n = parseInt((hex || "#818a99").slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+
+  // --- плавные числа ---------------------------------------------------------------------
+  const tweens = new Set();
+  class Num {
+    constructor(el, fmt, unitEl) { this.el = el; this.fmt = fmt; this.unitEl = unitEl; this.cur = null; this.to = null; tweens.add(this); }
+    set(v) {
+      if (v == null || !isFinite(v)) { this.cur = this.to = null; this.paint(null); return; }
+      if (this.cur == null || STILL) { this.cur = this.to = v; this.paint(v); return; }
+      if (v === this.to) return;
+      this.from = this.cur; this.to = v; this.t0 = performance.now();
+    }
+    step(now) {
+      if (this.to == null || this.cur === this.to) return;
+      const k = Math.max(0, Math.min(1, (now - this.t0) / 650)), e = 1 - Math.pow(1 - k, 3);
+      this.cur = k >= 1 ? this.to : this.from + (this.to - this.from) * e;
+      this.paint(this.cur);
+    }
+    paint(v) {
+      const out = this.fmt(v);
+      if (Array.isArray(out)) { setText(this.el, out[0]); if (this.unitEl) setText(this.unitEl, out[1]); }
+      else setText(this.el, out);
+    }
+  }
+  const num = {
+    qps: new Num($("#qps"), (v) => (v == null ? "—" : v.toFixed(1))),
+    p95: new Num($("#p95"), latParts, $("#p95-u")),
+    p99: new Num($("#p99"), latParts, $("#p99-u")),
+    wr: new Num($("#err-wr"), fmtInt),
+    wo: new Num($("#err-wo"), fmtInt),
+  };
+  function chip(el, cls, icon, text) {
+    setClass(el, "chip-st " + cls);
+    setText(el.children[0], icon);
+    setText(el.children[1], text);
+  }
+
+  // --- данные и часы сервера --------------------------------------------------------------
+  let S = null, clockOff = null, fails = 0;
+  function nowS() { return performance.now() / 1000 + (clockOff ?? (Date.now() - performance.now()) / 1000); }
+  async function poll() {
+    const t0 = performance.now();
+    try {
+      const r = await fetch("/api/state", { cache: "no-store", signal: AbortSignal.timeout(2500) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const s = await r.json();
+      const off = s.ts - performance.now() / 1000;
+      // сглаживаем сдвиг часов: время на графике не прыгает назад от опроса к опросу
+      clockOff = clockOff == null || Math.abs(off - clockOff) > 5 ? off : clockOff + (off - clockOff) * 0.15;
+      S = s; fails = 0;
+      render();
+    } catch (e) {
+      fails++;
+    }
+    $("#banner").hidden = fails < 3;
+    setTimeout(poll, Math.max(200, 1000 - (performance.now() - t0)));
+  }
+
+  function render() {
+    renderHeader();
+    renderKpis();
+    renderServing();
+    renderMachines();
+    renderQdrant();
+    renderIncident();
+    renderEvents();
+  }
+
+  // --- шапка -----------------------------------------------------------------------------
+  const srcEls = {};
+  function renderHeader() {
+    setText($("#title"), S.ui?.title || "Kubernetes + Qdrant");
+    let sub = S.ui?.subtitle || "";
+    const q = S.qdrant;
+    if (q && q.ok && q.peers.length) sub += ` · Qdrant ${q.peers.length} peers · ${q.shard_count} shards × RF ${q.replication_factor}`;
+    setText($("#subtitle"), sub);
+    $("#sim").hidden = S.mode !== "mock";
+    setText($("#caption"), S.ui?.caption || "");
+    const box = $("#sources");
+    for (const [key, label] of [["load", "load"], ["kube", "kubernetes"], ["qdrant", "qdrant"]]) {
+      const st = S.sources?.[key];
+      if (!srcEls[key]) { srcEls[key] = h("span", "", label); box.append(srcEls[key]); }
+      const el = srcEls[key];
+      el.hidden = !st;
+      if (!st) continue;
+      const cls = st.ok && !st.stale ? "ok" : st.age_s != null ? "warn" : "bad";
+      setClass(el, cls);
+      el.title = st.error || (st.stale ? "stale data" : "ok");
+    }
+    const lb = $("#legend-band"), inc = S.incident;
+    lb.hidden = !inc;
+    if (inc) { $("#legend-band-i").style.setProperty("background", inc.color); setText($("#legend-band-t"), `${inc.machine} outage`); }
+    setText($("#foot-right"), S.mode === "mock" ? "simulated scenario · repeats in a loop" : "live data · updates every second");
+  }
+
+  // --- плитки ----------------------------------------------------------------------------
+  function usualP99(series) {
+    const v = series.map((p) => p.p99).filter((x) => x != null).sort((a, b) => a - b);
+    return v.length ? v[Math.floor(v.length / 2)] : null;
+  }
+  function renderKpis() {
+    const L = S.load;
+    if (!L) {
+      for (const k of Object.keys(num)) num[k].set(null);
+      setText($("#qps-note"), "load generator not connected");
+      chip($("#err-wr-chip"), "", "●", "no data"); chip($("#err-wo-chip"), "", "●", "no data");
+      return;
+    }
+    const w10 = L.windows["10s"], w60 = L.windows["60s"], tot = L.totals, cfg = L.config || {};
+    const stale = L.stale || L.running === false;
+    num.qps.set(stale ? null : w10.qps);
+    num.p95.set(w10.p95_ms);
+    num.p99.set(w10.p99_ms);
+    setText($("#qps-note"), stale ? "generator stopped" : cfg.rate ? `target ${cfg.rate}/s` : "");
+    setText($("#p95-note"), `p50 ${fmtMs(w10.p50_ms)} · 10 s window`);
+    const usual = usualP99(L.series || []);
+    const foot = $("#p99-foot");
+    const ratio = usual && w10.p99_ms ? w10.p99_ms / usual : 1;
+    if (w10.p99_ms != null && w10.p99_ms > 150 && ratio >= 3) {
+      if (!foot.firstElementChild?.classList.contains("chip-st")) { foot.replaceChildren(h("span", "chip-st", null)); foot.firstChild.append(h("i"), h("span")); }
+      chip(foot.firstChild, "warn", "▲", `${ratio >= 10 ? Math.round(ratio) : ratio.toFixed(1)}× usual (${fmtMs(usual)})`);
+    } else {
+      if (!foot.firstElementChild?.classList.contains("note")) foot.replaceChildren(h("span", "note"));
+      setText(foot.firstChild, `max ${fmtMs(w10.max_ms)} · 10 s window`);
+    }
+    const retryOn = cfg.retry === "other";
+    num.wr.set(tot.with_retry.errors);
+    num.wo.set(tot.without_retry.errors);
+    if (!retryOn) chip($("#err-wr-chip"), "", "●", "retry is off");
+    else if (tot.with_retry.errors === 0) chip($("#err-wr-chip"), "good", "✓", "no user-facing errors");
+    else chip($("#err-wr-chip"), "bad", "✕", "users saw errors");
+    if (tot.without_retry.errors === 0) chip($("#err-wo-chip"), "good", "✓", "every first attempt OK");
+    else if (retryOn) chip($("#err-wo-chip"), "warn", "▲", "absorbed by retry");
+    else chip($("#err-wo-chip"), "bad", "✕", "seen by users");
+    const since = L.started_at ? `since ${fmtClock(L.started_at).slice(0, 5)}` : "since start";
+    setText($("#err-wr-sub"), `${fmtInt(tot.count)} requests · 60 s: ${w60.with_retry.errors}`);
+    $("#err-wr-sub").title = since;
+    const kinds = Object.entries(tot.without_retry.by_kind || {}).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`);
+    setText($("#err-wo-sub"), `60 s: ${w60.without_retry.errors}` + (kinds.length ? ` · ${kinds.join(" · ")}` : ""));
+    $("#err-wo-sub").title = `retries made: ${fmtInt(tot.retries)} · skipped (client busy): ${fmtInt(tot.skipped)}`;
+  }
+
+  // кто отвечал за 10 с: модель (или коллекция, если модель одна) — видно смену алиаса под нагрузкой
+  function renderServing() {
+    const L = S.load, rows = L && !L.stale ? L.serving || [] : [];
+    if (!rows.length) { setText($("#serving"), ""); return; }
+    const sameModel = rows.every((r) => r.model === rows[0].model);
+    const name = (r) => (rows.length > 1 && sameModel ? r.collection : r.model) || "?";
+    const parts = rows.length > 1 ? rows.slice(0, 3).map((r) => `${name(r)} ${Math.round(r.share * 100)}%`) : [`model ${name(rows[0])}`];
+    const t = L.server_timing_ms;
+    setText($("#serving"), " · " + parts.join(" · ") + (t ? ` · embed ${t.embed} ms · search ${t.search} ms` : ""));
+  }
+
+  // --- машины ----------------------------------------------------------------------------
+  const cards = new Map();
+  let machinesKey = "";
+  function renderMachines() {
+    const list = S.machines || [];
+    const key = list.map((m) => m.name).join(",");
+    const grid = $("#mgrid");
+    if (key !== machinesKey) {
+      grid.replaceChildren(); cards.clear(); machinesKey = key;
+      grid.style.setProperty("grid-template-columns", `repeat(${Math.max(1, list.length)}, 1fr)`);
+      for (const m of list) { const c = makeCard(m); cards.set(m.name, c); grid.append(c.el); }
+    }
+    for (const m of list) updateCard(cards.get(m.name), m);
+    const k = S.kube;
+    const cluster = list.filter((m) => m.role !== "observer" && m.kube);
+    const ready = cluster.filter((m) => m.status === "ready").length;
+    let note = "";
+    if (k) {
+      note = `${ready}/${cluster.length} nodes Ready`;
+      if (!k.ok) note += ` · ▲ Kubernetes API not responding · data ${fmtAge(k.age_s)} old`;
+      else if (!k.heartbeats) note += " · no kubelet heartbeats (leases)";
+      if (k.unscheduled?.length) note += ` · ${k.unscheduled.length} pod pending scheduling`;
+    } else note = "Kubernetes source not connected";
+    setText($("#kube-note"), note);
+  }
+  function makeCard(m) {
+    const el = h("div", "card machine");
+    el.style.setProperty("--mc", m.color);
+    const top = h("div", "row");
+    const pill = h("span", "pill"); pill.append(h("i"), h("span"));
+    top.append(h("div", "m-name", m.name), pill);
+    const meta = h("div", "m-meta"), hb = h("div", "m-hb"), pods = h("div", "pods");
+    const foot = h("div", "m-foot"), fq = h("span", "q"), fs = h("span");
+    foot.append(fq, fs);
+    el.append(top, meta, hb, pods, foot);
+    return { el, pill, meta, hb, pods, fq, fs, chips: new Map(), init: false, mode: null };
+  }
+  function updateCard(c, m) {
+    const now = nowS();
+    c.el.classList.toggle("down", m.status === "unreachable" || m.status === "notready");
+    c.el.classList.toggle("notready", m.status === "notready");
+    c.el.classList.toggle("observer", m.role === "observer");
+    const P = {
+      ready: ["good", "✓", "Ready"], unreachable: ["warn", "▲", "No heartbeat"], notready: ["bad", "✕", "NotReady"],
+      observer: ["neutral", "◆", "Observer"], unknown: ["muted", "?", "Unknown"],
+    }[m.status] || ["muted", "?", m.status];
+    const pillText = m.status === "notready" && m.status_since ? `${P[2]} · ${fmtAge(now - m.status_since)}` : P[2];
+    setClass(c.pill, "pill " + P[0]); setText(c.pill.children[0], P[1]); setText(c.pill.children[1], pillText);
+    setText(c.meta, m.role === "observer" ? "observer · outside the cluster" :
+      [m.role === "server" ? "k3s server" + (m.kube?.roles?.includes("etcd") ? " + etcd" : "") :
+        S.kube?.nodes?.length ? "not a node of this cluster" : "cluster machine", m.ip].filter(Boolean).join(" · "));
+    const kubeOk = !!S.kube?.ok;
+    const hbAge = m.heartbeat_at != null ? (kubeOk ? now - m.heartbeat_at : m.heartbeat_age_s) : null;
+    let hbCls = "m-hb", hbIcon = "♥", hbText = "";
+    if (m.role === "observer") { hbIcon = "→"; hbText = "entry point · load · this panel"; }
+    else if (m.status === "notready") {
+      hbCls += " bad"; hbIcon = "✕";
+      hbText = hbAge != null ? `no heartbeat for ${fmtAge(hbAge)}` : (m.kube?.reason || "node not ready");
+    } else if (m.status === "unreachable") { hbCls += " warn"; hbIcon = "▲"; hbText = `no heartbeat ${fmtAge(hbAge)} · k8s still “Ready”`; }
+    else if (m.status === "ready") hbText = hbAge != null ? `heartbeat ${fmtAge(hbAge)} ago` : `Ready for ${fmtAge(now - (m.status_since ?? now))}`;
+    else hbText = S.kube ? (S.kube.nodes?.length ? "no node with this name" : "waiting for Kubernetes data") : "Kubernetes source not connected";
+    setClass(c.hb, hbCls);
+    if (!c.hb.firstChild) c.hb.append(h("i"), document.createTextNode(""));
+    setText(c.hb.children[0], hbIcon); c.hb.lastChild.nodeValue = hbText;
+    if (m.role === "observer") syncServices(c, m.services || []);
+    else syncPods(c, m.pods || []);
+    // подвал: пир Qdrant и системные поды
+    let qt = "", qc = "q";
+    const q = m.qdrant;
+    if (q) {
+      const r = q.replicas || {}, total = Object.values(r).reduce((a, b) => a + b, 0);
+      if (!q.reachable) { qt = "Qdrant peer offline"; qc += " bad"; }
+      else if ((r.active || 0) === total) qt = `Qdrant ${q.leader ? "leader ★ · " : "peer · "}${total} replicas`;
+      else {
+        const parts = ["recovering", "partial", "dead", "offline"].filter((k) => r[k]).map((k) => `${r[k]} ${k}`);
+        qt = `Qdrant: ${r.active || 0} active · ${parts.join(" · ")}`;
+        qc += r.dead || r.offline ? " bad" : " warn";
+      }
+    } else if (m.role !== "observer" && S.qdrant?.ok) qt = "no Qdrant peer";
+    setClass(c.fq, qc); setText(c.fq, qt);
+    setText(c.fs, m.system_pods ? `+${m.system_pods} system` : "");
+  }
+  function podStatusText(p) {
+    if (p.state === "ready") return "Running";
+    if (p.state === "terminating") return "Terminating";
+    if (p.state === "starting") return p.status === "ContainerCreating" ? "Creating" : p.status;
+    if (p.state === "notready") return "Not ready";
+    return p.status;
+  }
+  function syncPods(c, pods) {
+    if (c.mode !== "pods") { c.pods.replaceChildren(); c.chips.clear(); c.mode = "pods"; c.init = false; }
+    const order = [...pods].sort((a, b) => (a.app + a.name).localeCompare(b.app + b.name));
+    c.pods.classList.toggle("dense", order.length > 2);
+    const seen = new Set();
+    for (const p of order) {
+      seen.add(p.name);
+      let ch = c.chips.get(p.name);
+      if (ch && ch.leaving) { clearTimeout(ch.timer); ch.leaving = false; ch.wrap.classList.remove("hide"); }
+      if (!ch) {
+        const wrap = h("div", "chip-wrap"), inner = h("div", "chip"), row = h("div", "chip-in");
+        const dot = h("span", "dot"), app = h("span", "app", p.app), id = h("span", "id", p.short), st = h("span", "st");
+        row.append(dot, app, id, st); inner.append(row); wrap.append(inner);
+        ch = { wrap, dot, st, leaving: false };
+        c.chips.set(p.name, ch);
+        c.pods.append(wrap);
+        if (c.init && !STILL) {
+          wrap.classList.add("hide", "new");
+          requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.remove("hide")));
+          setTimeout(() => wrap.classList.remove("new"), 7000);
+        }
+      }
+      setClass(ch.dot, "dot " + p.state);
+      setText(ch.st, podStatusText(p) + (p.restarts ? ` · ↻${p.restarts}` : ""));
+      ch.wrap.classList.toggle("terminating", p.state === "terminating");
+    }
+    for (const [name, ch] of c.chips) {
+      if (seen.has(name) || ch.leaving) continue;
+      ch.leaving = true;
+      ch.wrap.classList.add("hide");
+      ch.timer = setTimeout(() => { ch.wrap.remove(); c.chips.delete(name); }, STILL ? 0 : 700);
+    }
+    // порядок: приложение, имя; переставляем, только если он нарушен
+    const want = order.map((p) => c.chips.get(p.name).wrap);
+    const have = [...c.pods.children].filter((w) => !w.classList.contains("hide") || want.includes(w));
+    if (want.some((w, i) => have[i] !== w)) for (const w of want) c.pods.append(w);
+    c.init = true;
+  }
+  function syncServices(c, services) {
+    if (c.mode !== "svc") { c.pods.replaceChildren(); c.mode = "svc"; c.svc = []; }
+    services.forEach((s, i) => {
+      let row = c.svc[i];
+      if (!row) { row = h("div", "svc"); row.append(h("i"), h("span"), h("span", "d")); c.pods.append(row); c.svc[i] = row; }
+      setClass(row.children[0], s.ok === true ? "ok" : s.ok === false ? "bad" : "na");
+      setText(row.children[0], s.ok === true ? "✓" : s.ok === false ? "✕" : "–");
+      setText(row.children[1], s.name); setText(row.children[2], s.detail || "");
+    });
+    while (c.svc.length > services.length) c.svc.pop().remove();
+  }
+
+  // --- карта Qdrant ----------------------------------------------------------------------
+  let qKey = "", qCells = new Map(), qRows = new Map();
+  const Q_LABEL = { active: ["✓", "Active"], partial: ["◐", "Partial"], recovering: ["↻", "Recovering"], dead: ["✕", "Dead"],
+    offline: ["⊘", "Offline"], listener: ["◌", "Listener"], unknown: ["?", "Unknown"], none: ["", "—"] };
+  function renderQdrant() {
+    const q = S.qdrant, grid = $("#qgrid"), empty = $("#qempty");
+    if (!q || (!q.ok && !q.shards.length)) {
+      grid.hidden = true; empty.hidden = false;
+      setText(empty, !q ? "Qdrant source not connected" : `Qdrant not responding${S.sources?.qdrant?.error ? " · " + S.sources.qdrant.error : ""}`);
+      setText($("#q-note"), "");
+      qKey = "";
+      return;
+    }
+    grid.hidden = false; empty.hidden = true;
+    const byName = new Map((S.machines || []).map((m) => [m.name, m]));
+    const rows = [];
+    for (const m of S.machines || []) if (q.peers.some((p) => p.machine === m.name)) rows.push({ key: m.name, label: m.name, color: m.color });
+    for (const p of q.peers) if (!p.machine || !byName.has(p.machine)) rows.push({ key: "peer:" + p.id, label: p.machine || `peer ${p.id.slice(0, 6)}…`, color: null, peer: p.id });
+    const cols = q.shards.map((s) => s.id);
+    const key = rows.map((r) => r.key).join(",") + "|" + cols.join(",");
+    if (key !== qKey) {
+      qKey = key; qCells = new Map(); qRows = new Map(); grid.replaceChildren();
+      grid.style.setProperty("grid-template-columns", `200px repeat(${cols.length}, 1fr)`);
+      grid.append(h("div"));
+      for (const s of cols) grid.append(h("div", "qcol", `shard ${s}`));
+      for (const r of rows) {
+        const lab = h("div", "qrow", r.label);
+        if (r.color) lab.style.setProperty("--mc", r.color);
+        const small = h("small"); lab.append(small);
+        grid.append(lab); qRows.set(r.key, small);
+        for (const s of cols) {
+          const cell = h("div", "cell none"), bar = h("div", "bar"), ic = h("i"), tx = h("span");
+          cell.append(bar, ic, tx); grid.append(cell);
+          qCells.set(r.key + "|" + s, { cell, bar, ic, tx });
+        }
+      }
+    }
+    for (const r of rows) {
+      const peer = q.peers.find((p) => (r.peer ? p.id === r.peer : p.machine === r.key));
+      const small = qRows.get(r.key);
+      if (peer && !peer.reachable) { setText(small, "offline"); setClass(small, "bad"); }
+      else { setText(small, peer?.leader ? "leader" : ""); setClass(small, ""); }
+      for (const sh of q.shards) {
+        const rep = sh.replicas.find((x) => (r.peer ? x.peer === r.peer : x.machine === r.key));
+        const c = qCells.get(r.key + "|" + sh.id);
+        if (!c) continue;
+        const d = rep ? rep.display : "none";
+        setClass(c.cell, "cell " + d);
+        const [icon, text] = Q_LABEL[d] || ["?", d];
+        setText(c.ic, icon);
+        setText(c.tx, d === "recovering" && rep.progress != null ? `${text} ${Math.round(rep.progress * 100)}%` : text);
+        c.bar.style.setProperty("width", d === "recovering" && rep.progress != null ? `${Math.round(rep.progress * 100)}%` : "0%");
+        c.cell.title = rep ? `${rep.state}${rep.from_machine ? " · from " + rep.from_machine : ""}` : "no replica here";
+      }
+    }
+    const s = q.summary || {};
+    let note = `${s.active ?? 0}/${s.total ?? 0} replicas Active · ${q.collection || ""}`;
+    if (q.alias) note += ` (alias ${q.alias})`;
+    if (!q.ok || S.sources?.qdrant?.ok === false) note += ` · ▲ data ${fmtAge(S.sources?.qdrant?.age_s)} old`;
+    setText($("#q-note"), note);
+  }
+
+  // --- сбой и восстановление -------------------------------------------------------------
+  let stepEls = [];
+  function renderIncident() {
+    const inc = S.incident, now = nowS();
+    const card = $("#incident"), tag = $("#inc-tag");
+    const machines = (S.machines || []).filter((m) => m.role !== "observer");
+    const steps = inc ? inc.steps : [["lost", "Machine lost"], ["notready", "Node NotReady"], ["moved", "Pods rescheduled"],
+      ["back", "Machine back"], ["recovered", "Replicas in sync"]].map(([key, label]) => ({ key, label, done: false, offset_s: null }));
+    if (stepEls.length !== steps.length || stepEls.some((e, i) => e.key !== steps[i].key)) {
+      const box = $("#steps"); box.replaceChildren();
+      stepEls = steps.map((s) => {
+        const el = h("div", "step"), ic = h("span", "ic", "✓"), lab = h("span", "", s.label), off = h("span", "off");
+        el.append(ic, lab, off); box.append(el);
+        return { key: s.key, el, off };
+      });
+    }
+    const firstOpen = inc && inc.active ? steps.findIndex((s) => !s.done) : -1;
+    steps.forEach((s, i) => {
+      setClass(stepEls[i].el, "step" + (s.done ? " done" : i === firstOpen ? " current" : ""));
+      setText(stepEls[i].off, s.offset_s != null ? `+${Math.round(s.offset_s)} s` : "");
+    });
+    const big = $("#inc-big"), cap = $("#inc-cap"), sub = $("#inc-sub"), foot = $("#inc-foot");
+    if (!inc) {
+      tag.hidden = true;
+      chip($("#inc-phase"), "good", "✓", "no incident");
+      const nodes = machines.filter((m) => m.kube), ready = nodes.filter((m) => m.status === "ready").length;
+      const qs = S.qdrant?.ok ? S.qdrant.summary : null;
+      // «всё в порядке» — только когда это видно по данным, а не потому, что данных нет
+      const healthy = S.kube?.ok && nodes.length && ready === nodes.length && (!S.qdrant || qs?.healthy);
+      setText(big, healthy ? "All healthy" : "No incident"); big.style.setProperty("font-size", "52px");
+      setText(cap, "");
+      setText(sub, [S.kube ? `${ready}/${nodes.length} nodes Ready` : "Kubernetes not connected",
+        qs ? `${qs.active}/${qs.total} replicas Active` : S.qdrant ? "Qdrant not responding" : "Qdrant not connected"].join(" · "));
+      foot.replaceChildren();
+      return;
+    }
+    big.style.removeProperty("font-size");
+    tag.hidden = false; setText(tag, inc.machine); tag.style.setProperty("--mc", inc.color);
+    card.style.setProperty("--mc", inc.color);
+    const back = inc.steps.find((s) => s.key === "back");
+    if (inc.active && inc.phase !== "back") {
+      chip($("#inc-phase"), "bad", "●", "in progress");
+      setText(big, fmtTimer(now - inc.started));
+      setText(cap, `since ${inc.machine} was lost`);
+      setText(sub, "Kubernetes and Qdrant are working around the loss");
+    } else if (inc.active) {
+      chip($("#inc-phase"), "warn", "↻", "recovering");
+      setText(big, fmtTimer(now - (back?.ts ?? now)));
+      setText(cap, `replicas catching up since ${inc.machine} came back`);
+      setText(sub, `${inc.machine} was down for ${fmtDur(inc.downtime_s)}`);
+    } else {
+      chip($("#inc-phase"), "good", "✓", "recovered");
+      big.replaceChildren(document.createTextNode(String(Math.round(inc.recovery_s ?? 0))), h("span", "u", "s"));
+      setText(cap, `replicas back in sync after ${inc.machine} returned`);
+      setText(sub, `outage ${fmtDur(inc.downtime_s)} · total ${fmtDur(inc.total_s)}` + (inc.load?.p99_max != null ? ` · worst p99 ${fmtMs(inc.load.p99_max)}` : ""));
+    }
+    const ld = inc.load || {};
+    foot.replaceChildren();
+    if (S.load) {
+      const add = (label, v) => { const s = h("span", "", label + " "); s.append(h("b", "", fmtInt(v))); foot.append(s); };
+      add("requests", ld.requests); add("failed first attempts", ld.without_retry); add("user errors", ld.with_retry);
+    }
+  }
+
+  // --- лента событий ---------------------------------------------------------------------
+  const evMap = new Map();
+  const EV_ICON = { ok: "✓", warn: "▲", error: "✕", info: "•" };
+  function renderEvents() {
+    const list = (S.events || []).slice(0, 14), box = $("#ev-list"), inc = S.incident;
+    const colors = new Map((S.machines || []).map((m) => [m.name, m.color]));
+    const ids = new Set(list.map((e) => e.id));
+    for (const [id, it] of evMap) if (!ids.has(id)) { it.wrap.remove(); evMap.delete(id); }
+    const fresh = [];
+    for (const e of list) {
+      let it = evMap.get(e.id);
+      if (!it) {
+        const wrap = h("div", "ev-wrap"), ev = h("div", "ev"), row = h("div", "ev-in");
+        const time = h("div", "ev-time"), ic = h("div", "ev-ic"), body = h("div", "ev-body");
+        const title = h("div", "ev-title"), t = h("span", "t"), n = h("span", "n"), tag = h("span", "tag");
+        title.append(t, n, tag);
+        const detail = h("div", "ev-detail");
+        body.append(title, detail); row.append(time, ic, body); ev.append(row); wrap.append(ev);
+        it = { wrap, time, ic, t, n, tag, detail };
+        evMap.set(e.id, it);
+        if (box.childElementCount && !STILL) fresh.push(it);
+      }
+      const ts = e.last_ts ?? e.ts;
+      it.time.replaceChildren(h("b", "", fmtClock(ts)));
+      if (inc && ts >= inc.started - 1 && (inc.active || ts <= inc.started + (inc.total_s ?? 0) + 20))
+        it.time.append(document.createTextNode(`+${Math.max(0, Math.round(ts - inc.started))} s`));
+      const icon = e.kind === "security" ? "◆" : e.kind === "scenario" ? "▸" : EV_ICON[e.level] || "•";
+      setClass(it.ic, "ev-ic " + e.level); setText(it.ic, icon);
+      setText(it.t, e.title);
+      setText(it.n, e.count > 1 ? `×${e.count}` : "");
+      setText(it.detail, e.detail || e.pod || "");
+      it.tag.hidden = !e.machine;
+      if (e.machine) { setText(it.tag, e.machine); it.tag.style.setProperty("--tc", colors.get(e.machine) || "var(--muted)"); }
+    }
+    list.forEach((e, i) => { const w = evMap.get(e.id).wrap; if (box.children[i] !== w) box.insertBefore(w, box.children[i] || null); });
+    for (const it of fresh) {
+      it.wrap.classList.add("hide", "fresh");
+      requestAnimationFrame(() => requestAnimationFrame(() => it.wrap.classList.remove("hide")));
+      setTimeout(() => it.wrap.classList.remove("fresh"), 2500);
+    }
+    setText($("#ev-note"), list.length ? `${(S.events || []).length} recent` : "nothing yet");
+  }
+
+  // --- график задержки -------------------------------------------------------------------
+  const plot = $("#plot"), spark = $("#spark"), tip = $("#tip");
+  let yMax = 100, lastFrame = performance.now(), hoverX = null;
+  plot.addEventListener("mousemove", (ev) => { const r = plot.getBoundingClientRect(); hoverX = (ev.clientX - r.left) / scale; });
+  plot.addEventListener("mouseleave", () => { hoverX = null; tip.hidden = true; });
+  function sizeCanvas(cv) {
+    const w = cv.clientWidth, hh = cv.clientHeight, k = (devicePixelRatio || 1) * scale;
+    const W = Math.max(1, Math.round(w * k)), H = Math.max(1, Math.round(hh * k));
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const ctx = cv.getContext("2d");
+    ctx.setTransform(W / w, 0, 0, H / hh, 0, 0);
+    ctx.clearRect(0, 0, w, hh);
+    return [ctx, w, hh];
+  }
+  function niceStep(max, n) {
+    const raw = max / n, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+    return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
+  }
+  function axisLabel(v) { return v === 0 ? "0" : v >= 1000 ? `${+(v / 1000).toFixed(2)} s` : `${Math.round(v)} ms`; }
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const FONT = getComputedStyle(document.body).fontFamily;
+  const C = { ink: css("--ink"), ink2: css("--ink-2"), muted: css("--muted"), grid: css("--grid"), axis: css("--axis"),
+    p95: css("--p95"), warning: css("--warning"), critical: css("--critical"), surface: css("--surface") };
+
+  function drawChart(dt) {
+    const [ctx, w, hh] = sizeCanvas(plot);
+    const L = S?.load, pts = L?.series || [];
+    const now = nowS(), tEnd = now - 2.2, span = 180, tStart = tEnd - span;
+    const x0 = 66, x1 = w - 92, y0 = 30, stripH = 24, axisH = 20, y1 = hh - axisH - stripH - 12;
+    const sy1 = hh - axisH - 2, sy0 = sy1 - stripH;
+    const X = (t) => x0 + ((t - tStart) / span) * (x1 - x0);
+    let m = 0, mErr = 0;
+    for (const p of pts) {
+      if (p.t + 1 < tStart) continue;
+      if (p.p99 != null) m = Math.max(m, p.p99);
+      mErr = Math.max(mErr, (p.errors_without_retry || 0) + (p.errors_with_retry || 0));
+    }
+    const target = Math.max(100, m * 1.15);
+    yMax += (target - yMax) * (STILL ? 1 : Math.min(1, dt / 380));
+    const Y = (v) => y1 - (Math.min(v, yMax * 1.05) / yMax) * (y1 - y0);
+    ctx.font = "13px " + FONT;
+    ctx.textBaseline = "middle";
+    // сетка и подписи оси
+    const step = niceStep(yMax, 5);
+    ctx.lineWidth = 1;
+    for (let v = 0; v <= yMax + 1e-6; v += step) {
+      const y = Math.round(Y(v)) + 0.5;
+      ctx.strokeStyle = v === 0 ? C.axis : C.grid;
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      ctx.fillStyle = C.muted; ctx.textAlign = "right"; ctx.fillText(axisLabel(v), x0 - 10, y);
+    }
+    // время по оси X: каждые 30 с, подписи едут вместе с данными
+    ctx.textAlign = "center"; ctx.fillStyle = C.muted;
+    for (let t = Math.ceil(tStart / 30) * 30; t <= tEnd; t += 30) {
+      const x = X(t);
+      ctx.strokeStyle = C.axis; ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, sy1); ctx.lineTo(Math.round(x) + 0.5, sy1 + 4); ctx.stroke();
+      if (x > x0 + 24 && x < x1 - 24) ctx.fillText(fmtClock(t), x, hh - axisH / 2 + 1);
+    }
+    // полоса сбоя и отметки этапов
+    const inc = S?.incident;
+    if (inc) {
+      const end = inc.active ? now : inc.started + (inc.total_s ?? 0);
+      const a = Math.max(x0, X(inc.started)), b = Math.min(x1, X(end));
+      if (b > a) { ctx.fillStyle = hexA(inc.color, 0.085); ctx.fillRect(a, y0 - 6, b - a, y1 - y0 + 6); }
+      let lastX = -1e9, row = 0;
+      for (const s of inc.steps) {
+        if (!s.ts || s.ts < tStart || s.ts > tEnd) continue;
+        const x = Math.round(X(s.ts)) + 0.5;
+        ctx.strokeStyle = hexA(C.ink, 0.28); ctx.beginPath(); ctx.moveTo(x, y0 - 4); ctx.lineTo(x, y1); ctx.stroke();
+        row = x - lastX < 84 ? (row + 1) % 2 : 0; lastX = x;
+        ctx.fillStyle = C.ink2; ctx.textAlign = "left"; ctx.fillText(STEP_SHORT[s.key] || s.key, x + 5, y0 - 18 + row * 14);
+      }
+    }
+    // линии p95 и p99 (точка секунды — у её конца)
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, y0 - 8, x1 - x0, y1 - y0 + 9); ctx.clip();
+    const line = (key) => {
+      ctx.beginPath(); let on = false;
+      for (const p of pts) {
+        const v = p[key];
+        if (v == null) { on = false; continue; }
+        const x = X(p.t + 1), y = Y(v);
+        if (on) ctx.lineTo(x, y); else { ctx.moveTo(x, y); on = true; }
+      }
+    };
+    line("p99");
+    ctx.lineTo(X((pts.at(-1)?.t ?? 0) + 1), y1);
+    ctx.lineTo(X((pts.find((p) => p.p99 != null)?.t ?? 0) + 1), y1);
+    ctx.closePath(); ctx.fillStyle = hexA(C.ink, 0.035); ctx.fill();
+    ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.lineWidth = 2;
+    line("p95"); ctx.strokeStyle = C.p95; ctx.stroke();
+    line("p99"); ctx.strokeStyle = C.ink; ctx.stroke();
+    ctx.restore();
+    // подписи у концов линий
+    const lastP = [...pts].reverse().find((p) => p.p99 != null);
+    if (lastP) {
+      const ex = Math.min(x1, X(lastP.t + 1));
+      // p99 всегда не ниже p95: подпись p99 — над подписью p95, без наложения
+      const yb = Math.min(Y(lastP.p95 ?? lastP.p99), y1 + 4), ya = Math.max(y0, Math.min(Y(lastP.p99), yb - 17));
+      ctx.textAlign = "left";
+      ctx.fillStyle = C.ink; ctx.fillText(`p99 ${fmtMs(lastP.p99)}`, ex + 10, ya);
+      if (lastP.p95 != null) { ctx.fillStyle = C.p95; ctx.fillText(`p95 ${fmtMs(lastP.p95)}`, ex + 10, Math.max(ya + 17, yb)); }
+      ctx.fillStyle = C.ink; ctx.strokeStyle = C.surface; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(X(lastP.t + 1), Y(lastP.p99), 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    // полоска упавших первых попыток (своя шкала)
+    ctx.fillStyle = C.muted; ctx.textAlign = "right"; ctx.font = "12px " + FONT;
+    ctx.fillText("failed/s", x0 - 10, (sy0 + sy1) / 2);
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, sy1 + 0.5); ctx.lineTo(x1, sy1 + 0.5); ctx.stroke();
+    const sMax = Math.max(4, mErr), bw = Math.max(1, (x1 - x0) / span - 1.5);
+    for (const p of pts) {
+      const wo = p.errors_without_retry || 0, wr = p.errors_with_retry || 0;
+      if (!wo && !wr) continue;
+      const x = X(p.t), hgt = Math.max(2, ((wo + wr) / sMax) * stripH);
+      if (x + bw < x0 || x > x1) continue;
+      ctx.fillStyle = C.warning; ctx.fillRect(x, sy1 - hgt, bw, hgt);
+      if (wr) { const hr = Math.max(2, (wr / sMax) * stripH); ctx.fillStyle = C.critical; ctx.fillRect(x, sy1 - hr, bw, hr); }
+    }
+    // наведение: перекрестие и подсказка
+    if (hoverX != null && hoverX >= x0 && hoverX <= x1 && pts.length) {
+      const t = tStart + ((hoverX - x0) / (x1 - x0)) * span - 1;
+      let best = null;
+      for (const p of pts) if (!best || Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+      if (best) {
+        const x = Math.round(X(best.t + 1)) + 0.5;
+        ctx.strokeStyle = hexA(C.ink, 0.4); ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, sy1); ctx.stroke();
+        tip.replaceChildren(h("b", "", fmtClock(best.t + 1)), document.createElement("br"),
+          document.createTextNode(`p99 ${fmtMs(best.p99)} · p95 ${fmtMs(best.p95)} · p50 ${fmtMs(best.p50)}`), document.createElement("br"),
+          document.createTextNode(`${best.qps} req/s · failed first attempts ${best.errors_without_retry} · user errors ${best.errors_with_retry}`));
+        tip.hidden = false;
+        tip.style.setProperty("left", `${Math.min(x + 14, w - tip.offsetWidth - 4)}px`);
+        tip.style.setProperty("top", `${y0}px`);
+      }
+    }
+  }
+
+  function drawSpark() {
+    const [ctx, w, hh] = sizeCanvas(spark);
+    const pts = (S?.load?.series || []).slice(-90);
+    if (pts.length < 2) return;
+    const rate = S.load.config?.rate || 0;
+    const top = Math.max(rate * 1.35, ...pts.map((p) => p.qps)) || 1;
+    const X = (i) => (i / (pts.length - 1)) * (w - 6), Y = (v) => hh - 3 - (v / top) * (hh - 6);
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(X(i), Y(p.qps)) : ctx.moveTo(X(i), Y(p.qps))));
+    ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.strokeStyle = C.ink2; ctx.stroke();
+    ctx.fillStyle = C.ink2; ctx.beginPath(); ctx.arc(X(pts.length - 1), Y(pts.at(-1).qps), 3, 0, Math.PI * 2); ctx.fill();
+  }
+
+  let lastSec = 0;
+  function frame(t) {
+    const dt = t - lastFrame; lastFrame = t;
+    for (const tw of tweens) tw.step(t);
+    if (S) {
+      drawChart(dt); drawSpark();
+      const sec = Math.floor(nowS());
+      if (sec !== lastSec) { lastSec = sec; setText($("#clock"), fmtClock(sec)); renderIncident(); renderMachines(); }
+    }
+    requestAnimationFrame(frame);
+  }
+  poll();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
