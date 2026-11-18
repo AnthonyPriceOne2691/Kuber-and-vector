@@ -1,0 +1,70 @@
+# HAProxy на machine-4: вход стенда, в облаке на его месте был бы балансировщик провайдера.
+# Снаружи открыт только 443 (TLS). API Kubernetes и статистика слушают только localhost машины.
+# Строки серверов (@SEARCH_SERVERS@, @API_SERVERS@) подставляет install.sh по адресам узлов.
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+    ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+    ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305
+    ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+
+defaults
+    log global
+    mode http
+    option httplog
+    option dontlognull
+    timeout connect 300ms
+    timeout client 30s
+    timeout server 3s
+    timeout http-request 5s
+    timeout http-keep-alive 5s
+    timeout queue 2s
+    timeout check 500ms
+    # Поиск без побочных эффектов: неудачный запрос повторяем, каждый раз на другой машине
+    retries 2
+    option redispatch 1
+
+frontend https
+    bind :443 ssl crt /etc/haproxy/certs/stand.pem alpn h2,http/1.1
+    http-request deny deny_status 405 unless METH_GET
+    http-request deny deny_status 404 unless { path /search /healthz }
+    http-response set-header Strict-Transport-Security "max-age=31536000"
+    http-response del-header Server
+    default_backend search
+
+backend search
+    balance leastconn
+    option httpchk
+    http-check send meth GET uri /readyz
+    http-check expect status 200
+    retry-on conn-failure empty-response response-timeout 503
+    # мёртвая машина выпадает после двух проверок подряд, примерно за 2 с
+    default-server check inter 1s fastinter 500ms downinter 1s fall 2 rise 2
+@SEARCH_SERVERS@
+
+frontend kube-api
+    mode tcp
+    bind 127.0.0.1:6443
+    option tcplog
+    timeout client 1h
+    default_backend kube-api
+
+backend kube-api
+    mode tcp
+    timeout connect 1s
+    timeout server 1h
+    default-server check inter 2s fall 2 rise 2
+@API_SERVERS@
+
+frontend stats
+    bind 127.0.0.1:8404
+    stats enable
+    stats uri /stats
+    stats refresh 2s
+    stats show-legends

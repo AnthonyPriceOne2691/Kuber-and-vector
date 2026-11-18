@@ -1,6 +1,11 @@
 # Сервис поиска в кластере. Пространство имён под профилем Pod Security «restricted».
 # Под: без root, корень только на чтение, без привилегий и capabilities, без токена
 # сервисного аккаунта Kubernetes; у сервиса только ключ Qdrant на чтение.
+#
+# Этап 2: три реплики, по одной на машину. Вход HAProxy на machine-4 ходит на NodePort 30080
+# каждой машины; externalTrafficPolicy Local: машина отвечает только своим подом, поэтому
+# выключенная машина просто пропадает из HAProxy, а не тянет за собой запросы к чужим подам.
+# Адрес Qdrant подставляет deploy.sh (ClusterIP вместо имени): в горячем пути нет DNS.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -16,9 +21,11 @@ metadata:
   namespace: search
   labels: {app: search}
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels: {app: search}
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   template:
     metadata:
       labels: {app: search}
@@ -30,16 +37,36 @@ spec:
         runAsGroup: 10001
         fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
+      # ровно по одному поду на машину: считаем только поды текущей версии (pod-template-hash),
+      # а выключенную машину (с taint unreachable) не считаем вовсе (nodeTaintsPolicy Honor),
+      # тогда её под спокойно переезжает на одну из двух живых
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          matchLabelKeys: [pod-template-hash]
+          labelSelector:
+            matchLabels: {app: search}
+      # переезд с недоступной машины через 30 с вместо стандартных 300
+      tolerations:
+        - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+        - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
       containers:
         - name: search
-          image: localhost/search:stage1
+          image: localhost/search:stage2
           imagePullPolicy: Never
           ports:
             - {name: http, containerPort: 8080}
           env:
-            - {name: QDRANT_URL, value: "http://qdrant.qdrant.svc.cluster.local:6333"}
-            - {name: COLLECTION, value: lbr_mini_naive500_bge_m3}
-            - {name: OLLAMA_URL, value: "http://192.168.104.2:11434"}
+            - {name: QDRANT_URL, value: "http://QDRANT_CLUSTER_IP:6333"}
+            - {name: COLLECTION, value: contracts_rf2}
+            - {name: SEARCH_MODE, value: dense}
+            - {name: OLLAMA_URL, value: "http://192.168.105.1:11434"}
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -49,7 +76,9 @@ spec:
             - {name: tmp, mountPath: /tmp}
           readinessProbe:
             httpGet: {path: /readyz, port: http}
-            periodSeconds: 5
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 2
           livenessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 10
@@ -64,12 +93,24 @@ spec:
         - name: tmp
           emptyDir: {medium: Memory, sizeLimit: 16Mi}
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: search
+  namespace: search
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: {app: search}
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: search
   namespace: search
 spec:
+  type: NodePort
+  externalTrafficPolicy: Local
   selector: {app: search}
   ports:
-    - {name: http, port: 80, targetPort: http}
+    - {name: http, port: 80, targetPort: http, nodePort: 30080}

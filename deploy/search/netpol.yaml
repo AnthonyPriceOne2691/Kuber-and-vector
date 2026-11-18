@@ -1,0 +1,38 @@
+# Сеть сервиса поиска: «запрещено всё, кроме нужного».
+# Входящие: только HAProxy на machine-4 (ENTRY_IP; NodePort с externalTrafficPolicy Local
+# сохраняет адрес клиента). Исходящие: только Qdrant (6333) и фильтр Ollama на Маке (11434).
+# DNS поиску не нужен: оба адреса заданы IP. «Заражённый под» отсюда никуда больше не дойдёт.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: search}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: search-ingress, namespace: search}
+spec:
+  podSelector:
+    matchLabels: {app: search}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: {cidr: ENTRY_IP/32}
+      ports: [{port: 8080, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: search-egress, namespace: search}
+spec:
+  podSelector:
+    matchLabels: {app: search}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: qdrant}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: qdrant}}
+      ports: [{port: 6333, protocol: TCP}]
+    - to:
+        - ipBlock: {cidr: 192.168.105.1/32}
+      ports: [{port: 11434, protocol: TCP}]

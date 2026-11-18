@@ -1,7 +1,9 @@
-# Qdrant на стенде (чарт qdrant 1.20.2). Этап 1: один пир на machine-1.
+# Qdrant на стенде (чарт qdrant 1.20.2). Этап 2: три пира, по одному на machine-1…3.
+# Кластерный режим чарта: пир 0 поднимает консенсус, остальные присоединяются к нему
+# по безголовому сервису (порт 6335). Шарды и реплики задаёт коллекция при создании.
 # Образ только из комплекта: pullPolicy Never, в реестр кластер не ходит.
 # Ключи (админский и только на чтение) лежат в Secret qdrant-keys, его создаёт install.sh.
-replicaCount: 1
+replicaCount: 3
 
 image:
   repository: docker.io/qdrant/qdrant
@@ -23,6 +25,21 @@ readOnlyApiKey:
     secretKeyRef:
       name: qdrant-keys
       key: read-only-api-key
+
+# Два пира на одной машине сделали бы её выключение потерей двух реплик сразу
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - {key: app.kubernetes.io/name, operator: In, values: [qdrant]}
+            - {key: app.kubernetes.io/instance, operator: In, values: [qdrant]}
+        topologyKey: kubernetes.io/hostname
+
+# Плановые работы (drain) уводят не больше одного пира за раз
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
 
 persistence:
   size: 4Gi

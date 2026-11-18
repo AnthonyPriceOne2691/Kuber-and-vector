@@ -1,0 +1,106 @@
+# Falco на стенде (чарт falco 9.2.2, Falco 0.45.2): сторож для сцены «заражённый под».
+# Работает без интернета: образ из комплекта (pullPolicy Never); модуль modern eBPF встроен
+# в программу; стандартные правила и плагин container лежат в образе, поэтому falcoctl
+# (качает правила и плагины при старте) выключен. Плагин container берёт имена подов
+# и пространств имён из containerd k3s.
+image:
+  registry: docker.io
+  repository: falcosecurity/falco
+  tag: "0.45.2"
+  pullPolicy: Never
+
+driver:
+  kind: modern_ebpf
+  modernEbpf:
+    # не privileged, а только нужные права: BPF, PERFMON, SYS_RESOURCE, SYS_PTRACE
+    leastPrivileged: true
+
+falcoctl:
+  artifact:
+    install: {enabled: false}
+    follow: {enabled: false}
+
+collectors:
+  containerEngine:
+    enabled: true
+    engines:
+      docker: {enabled: false}
+      podman: {enabled: false}
+      containerd: {enabled: false}
+      cri:
+        enabled: true
+        sockets: ["/run/k3s/containerd/containerd.sock"]
+      lxc: {enabled: false}
+      libvirt_lxc: {enabled: false}
+      bpm: {enabled: false}
+  kubernetes:
+    enabled: false
+
+falco:
+  json_output: true
+  json_include_output_property: true
+  rules_files:
+    - /etc/falco/falco_rules.yaml
+    - /etc/falco/rules.d
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 512Mi}
+
+customRules:
+  stand-rules.yaml: |-
+    # Правила стенда: как ведёт себя под поиска. Сервис это один процесс python3 (uvicorn),
+    # он ходит только в Qdrant (6333) и в фильтр Ollama на Маке (11434). Всё остальное в его
+    # контейнере значит, что внутри человек или чужой код.
+    - list: stand_shells
+      items: [sh, bash, dash, ash, zsh, ksh]
+
+    - macro: stand_search_container
+      condition: (container.id != host and k8s.ns.name = "search")
+
+    - rule: Stand shell in search pod
+      desc: В контейнере сервиса поиска запущена командная оболочка. Сервису она не нужна.
+      condition: spawned_process and stand_search_container and proc.name in (stand_shells)
+      output: >
+        Оболочка в поде поиска (pod=%k8s.pod.name proc=%proc.name parent=%proc.pname
+        cmd=%proc.cmdline uid=%user.uid)
+      priority: WARNING
+      tags: [stand, shell]
+
+    - rule: Stand unexpected process in search pod
+      desc: >
+        В поде поиска запущен процесс, которого у сервиса нет. Служебный runc init от kubectl exec
+        не считаем: саму оболочку ловит правило выше.
+      condition: >
+        spawned_process and stand_search_container and not proc.name in (stand_shells)
+        and not proc.pname = runc
+        and (not proc.name startswith python or proc.pname in (stand_shells))
+      output: >
+        Чужой процесс в поде поиска (pod=%k8s.pod.name proc=%proc.name parent=%proc.pname
+        cmd=%proc.cmdline uid=%user.uid)
+      priority: WARNING
+      tags: [stand, process]
+
+    - rule: Stand Qdrant key read from shell
+      desc: Ключ Qdrant читает процесс, запущенный из оболочки, а не сам сервис.
+      condition: >
+        open_read and stand_search_container and fd.name startswith /run/secrets/qdrant
+        and proc.pname in (stand_shells)
+      output: >
+        Ключ Qdrant читают из оболочки (pod=%k8s.pod.name proc=%proc.cmdline file=%fd.name)
+      priority: CRITICAL
+      tags: [stand, credentials]
+
+    - rule: Stand forbidden connection from search pod
+      desc: >
+        Под поиска соединяется не с Qdrant и не с фильтром Ollama (успешно или нет). В Falco 0.45
+        событий входа в вызов нет, connect виден один раз, на выходе.
+      condition: >
+        evt.type = connect and stand_search_container
+        and (fd.typechar = 4 or fd.typechar = 6) and not fd.sport in (6333, 11434)
+        and fd.sip != "0.0.0.0" and not fd.snet in ("127.0.0.0/8")
+      output: >
+        Запрещённое соединение из пода поиска (pod=%k8s.pod.name proc=%proc.cmdline
+        to=%fd.sip:%fd.sport res=%evt.res)
+      priority: WARNING
+      tags: [stand, network]

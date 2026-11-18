@@ -34,10 +34,15 @@ ssh:
 propagateProxyEnv: false
 upgradePackages: false
 
-# Общая сеть машин стенда: видят друг друга как lima-<имя>.internal,
-# Мак для них это шлюз 192.168.104.2
+# Сеть машин стенда (решение владельца 18.11): socket_vmnet в режиме shared, интерфейс lima0,
+# 192.168.105.0/24, Мак для машин это 192.168.105.1. localhost Мака по этой сети не виден.
+# Встроенная сеть Lima (eth0, 192.168.5.0/24) остаётся для ssh, DNS и выхода сборочной ВМ,
+# и на ней доступ к localhost Мака закрыт самим гипервизором (hostLoopback: false).
 networks:
-  - lima: user-v2
+  - lima: shared
+
+networkOpts:
+  hostLoopback: false
 
 user:
   name: ops

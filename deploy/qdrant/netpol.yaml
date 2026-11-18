@@ -1,0 +1,43 @@
+# Сеть Qdrant: «запрещено всё, кроме нужного».
+# Входящие: REST 6333 только от подов поиска и от пиров; внутренний порт 6335 только от пиров
+# (GHSA-frc7-44gm-99qq: до 1.20.0 он принимал запросы без ключа; у нас 1.20.2, это второй слой).
+# Исходящие: только пиры и DNS кластера (пиры находят друг друга по именам безголового сервиса).
+# Админ (загрузка) ходит через kubectl port-forward, это туннель через API Kubernetes под RBAC.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: qdrant}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: qdrant-ingress, namespace: qdrant}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: qdrant}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: search}}
+          podSelector: {matchLabels: {app: search}}
+      ports: [{port: 6333, protocol: TCP}]
+    - from:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: qdrant}}
+      ports: [{port: 6333, protocol: TCP}, {port: 6335, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: qdrant-egress, namespace: qdrant}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: qdrant}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {matchLabels: {app.kubernetes.io/name: qdrant}}
+      ports: [{port: 6333, protocol: TCP}, {port: 6335, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
