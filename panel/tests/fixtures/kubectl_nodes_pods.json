@@ -1,0 +1,172 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "metadata": {"resourceVersion": ""},
+  "items": [
+    {
+      "apiVersion": "v1", "kind": "Node",
+      "metadata": {"name": "machine-1", "creationTimestamp": "2026-11-18T09:00:00Z",
+        "labels": {"kubernetes.io/hostname": "machine-1", "node-role.kubernetes.io/control-plane": "true",
+                   "node-role.kubernetes.io/etcd": "true", "node-role.kubernetes.io/master": "true"}},
+      "spec": {"podCIDR": "10.42.0.0/24"},
+      "status": {
+        "addresses": [{"type": "InternalIP", "address": "192.168.104.3"}, {"type": "Hostname", "address": "machine-1"}],
+        "conditions": [
+          {"type": "MemoryPressure", "status": "False", "reason": "KubeletHasSufficientMemory",
+           "lastHeartbeatTime": "2026-11-18T10:01:00Z", "lastTransitionTime": "2026-11-18T09:01:00Z"},
+          {"type": "Ready", "status": "True", "reason": "KubeletReady", "message": "kubelet is posting ready status",
+           "lastHeartbeatTime": "2026-11-18T10:01:00Z", "lastTransitionTime": "2026-11-18T09:01:00Z"}
+        ],
+        "nodeInfo": {"kubeletVersion": "v1.37.2+k3s1"}
+      }
+    },
+    {
+      "apiVersion": "v1", "kind": "Node",
+      "metadata": {"name": "machine-2", "creationTimestamp": "2026-11-18T09:02:00Z",
+        "labels": {"kubernetes.io/hostname": "machine-2", "node-role.kubernetes.io/control-plane": "true",
+                   "node-role.kubernetes.io/etcd": "true", "node-role.kubernetes.io/master": "true"}},
+      "spec": {"podCIDR": "10.42.1.0/24", "taints": [
+        {"key": "node.kubernetes.io/unreachable", "effect": "NoSchedule", "timeAdded": "2026-11-18T10:05:44Z"},
+        {"key": "node.kubernetes.io/unreachable", "effect": "NoExecute", "timeAdded": "2026-11-18T10:05:49Z"}]},
+      "status": {
+        "addresses": [{"type": "InternalIP", "address": "192.168.104.4"}, {"type": "Hostname", "address": "machine-2"}],
+        "conditions": [
+          {"type": "Ready", "status": "Unknown", "reason": "NodeStatusUnknown", "message": "Kubelet stopped posting node status.",
+           "lastHeartbeatTime": "2026-11-18T10:05:00Z", "lastTransitionTime": "2026-11-18T10:05:44Z"}
+        ],
+        "nodeInfo": {"kubeletVersion": "v1.37.2+k3s1"}
+      }
+    },
+    {
+      "apiVersion": "v1", "kind": "Node",
+      "metadata": {"name": "machine-3", "creationTimestamp": "2026-11-18T09:03:00Z",
+        "labels": {"kubernetes.io/hostname": "machine-3", "node-role.kubernetes.io/control-plane": "true",
+                   "node-role.kubernetes.io/etcd": "true"}},
+      "spec": {"podCIDR": "10.42.2.0/24", "unschedulable": true,
+               "taints": [{"key": "node.kubernetes.io/unschedulable", "effect": "NoSchedule"}]},
+      "status": {
+        "addresses": [{"type": "InternalIP", "address": "192.168.104.5"}],
+        "conditions": [
+          {"type": "Ready", "status": "True", "reason": "KubeletReady", "message": "kubelet is posting ready status",
+           "lastHeartbeatTime": "2026-11-18T10:01:00Z", "lastTransitionTime": "2026-11-18T09:04:00.000000Z"}
+        ],
+        "nodeInfo": {"kubeletVersion": "v1.37.2+k3s1"}
+      }
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "search-7f9c6d8b5-dfzb8", "namespace": "search", "creationTimestamp": "2026-11-18T09:30:00Z",
+        "labels": {"app": "search", "pod-template-hash": "7f9c6d8b5"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "search-7f9c6d8b5", "controller": true}]},
+      "spec": {"nodeName": "machine-1"},
+      "status": {"phase": "Running", "podIP": "10.42.0.11",
+        "conditions": [{"type": "Ready", "status": "True"}, {"type": "ContainersReady", "status": "True"}],
+        "containerStatuses": [{"name": "search", "ready": true, "restartCount": 0, "state": {"running": {"startedAt": "2026-11-18T09:30:05Z"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "search-7f9c6d8b5-8szvd", "namespace": "search", "creationTimestamp": "2026-11-18T09:30:00Z",
+        "deletionTimestamp": "2026-11-18T10:05:54Z", "deletionGracePeriodSeconds": 30,
+        "labels": {"app": "search", "pod-template-hash": "7f9c6d8b5"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "search-7f9c6d8b5", "controller": true}]},
+      "spec": {"nodeName": "machine-2"},
+      "status": {"phase": "Running", "podIP": "10.42.1.21",
+        "conditions": [{"type": "Ready", "status": "False"}],
+        "containerStatuses": [{"name": "search", "ready": false, "restartCount": 0, "state": {"running": {"startedAt": "2026-11-18T09:30:06Z"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "search-7f9c6d8b5-jd2w8", "namespace": "search", "creationTimestamp": "2026-11-18T10:05:54Z",
+        "labels": {"app": "search", "pod-template-hash": "7f9c6d8b5"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "search-7f9c6d8b5", "controller": true}]},
+      "spec": {"nodeName": "machine-3"},
+      "status": {"phase": "Pending",
+        "conditions": [{"type": "PodScheduled", "status": "True"}, {"type": "Ready", "status": "False"}],
+        "containerStatuses": [{"name": "search", "ready": false, "restartCount": 0, "state": {"waiting": {"reason": "ContainerCreating"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "search-7f9c6d8b5-q4w7r", "namespace": "search", "creationTimestamp": "2026-11-18T10:05:55Z",
+        "labels": {"app": "search", "pod-template-hash": "7f9c6d8b5"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "search-7f9c6d8b5", "controller": true}]},
+      "spec": {},
+      "status": {"phase": "Pending", "conditions": [{"type": "PodScheduled", "status": "False", "reason": "Unschedulable"}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "search-7f9c6d8b5-ev1ct", "namespace": "search", "creationTimestamp": "2026-11-18T08:00:00Z",
+        "labels": {"app": "search"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "search-7f9c6d8b5", "controller": true}]},
+      "spec": {"nodeName": "machine-3"},
+      "status": {"phase": "Failed", "reason": "Evicted", "message": "The node was low on resource: memory."}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "warmup-6c9d4b7f8-k2m4n", "namespace": "search", "creationTimestamp": "2026-11-18T10:06:00Z",
+        "labels": {"app.kubernetes.io/name": "warmup"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "warmup-6c9d4b7f8", "controller": true}]},
+      "spec": {"nodeName": "machine-1"},
+      "status": {"phase": "Pending",
+        "initContainerStatuses": [{"name": "fetch", "ready": false, "restartCount": 0, "state": {"running": {"startedAt": "2026-11-18T10:06:02Z"}}}],
+        "containerStatuses": [{"name": "warmup", "ready": false, "restartCount": 0, "state": {"waiting": {"reason": "PodInitializing"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "qdrant-0", "namespace": "qdrant", "creationTimestamp": "2026-11-18T09:10:00Z",
+        "labels": {"app.kubernetes.io/name": "qdrant", "app.kubernetes.io/instance": "qdrant"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "StatefulSet", "name": "qdrant", "controller": true}]},
+      "spec": {"nodeName": "machine-1"},
+      "status": {"phase": "Running", "podIP": "10.42.0.12", "conditions": [{"type": "Ready", "status": "True"}],
+        "containerStatuses": [{"name": "qdrant", "ready": true, "restartCount": 0, "state": {"running": {"startedAt": "2026-11-18T09:10:10Z"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "qdrant-1", "namespace": "qdrant", "creationTimestamp": "2026-11-18T09:10:00Z",
+        "labels": {"app.kubernetes.io/name": "qdrant", "app.kubernetes.io/instance": "qdrant"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "StatefulSet", "name": "qdrant", "controller": true}]},
+      "spec": {"nodeName": "machine-2"},
+      "status": {"phase": "Running", "podIP": "10.42.1.12", "conditions": [{"type": "Ready", "status": "False"}],
+        "containerStatuses": [{"name": "qdrant", "ready": false, "restartCount": 3, "state": {"running": {"startedAt": "2026-11-18T09:11:10Z"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "qdrant-2", "namespace": "qdrant", "creationTimestamp": "2026-11-18T09:10:00Z",
+        "labels": {"app.kubernetes.io/name": "qdrant", "app.kubernetes.io/instance": "qdrant"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "StatefulSet", "name": "qdrant", "controller": true}]},
+      "spec": {"nodeName": "machine-3"},
+      "status": {"phase": "Running", "podIP": "10.42.2.12", "conditions": [{"type": "Ready", "status": "True"}],
+        "containerStatuses": [
+          {"name": "qdrant", "ready": true, "restartCount": 1, "state": {"running": {"startedAt": "2026-11-18T09:12:00Z"}}},
+          {"name": "sidecar", "ready": true, "restartCount": 2, "state": {"running": {"startedAt": "2026-11-18T09:12:00Z"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "coredns-6799fbcd5-x7k2p", "namespace": "kube-system", "creationTimestamp": "2026-11-18T09:00:30Z",
+        "labels": {"k8s-app": "kube-dns", "pod-template-hash": "6799fbcd5"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "coredns-6799fbcd5", "controller": true}]},
+      "spec": {"nodeName": "machine-1"},
+      "status": {"phase": "Running", "podIP": "10.42.0.2", "conditions": [{"type": "Ready", "status": "True"}],
+        "containerStatuses": [{"name": "coredns", "ready": true, "restartCount": 0, "state": {"running": {}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "metrics-server-54fd9b65b-t8w2v", "namespace": "kube-system", "creationTimestamp": "2026-11-18T09:00:30Z",
+        "labels": {"k8s-app": "metrics-server"},
+        "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "metrics-server-54fd9b65b", "controller": true}]},
+      "spec": {"nodeName": "machine-3"},
+      "status": {"phase": "Running", "podIP": "10.42.2.4", "conditions": [{"type": "Ready", "status": "False"}],
+        "containerStatuses": [{"name": "metrics-server", "ready": false, "restartCount": 7,
+          "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off 5m0s restarting failed container"}}}]}
+    },
+    {
+      "apiVersion": "v1", "kind": "Pod",
+      "metadata": {"name": "helm-install-traefik-9xk2p", "namespace": "kube-system", "creationTimestamp": "2026-11-18T09:00:20Z",
+        "labels": {"helmcharts.helm.cattle.io/chart": "traefik"},
+        "ownerReferences": [{"apiVersion": "batch/v1", "kind": "Job", "name": "helm-install-traefik", "controller": true}]},
+      "spec": {"nodeName": "machine-1"},
+      "status": {"phase": "Succeeded", "conditions": [{"type": "Ready", "status": "False", "reason": "PodCompleted"}],
+        "containerStatuses": [{"name": "helm", "ready": false, "restartCount": 0,
+          "state": {"terminated": {"exitCode": 0, "reason": "Completed"}}}]}
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "metadata": {"resourceVersion": ""},
+  "items": [
+    {"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
+     "metadata": {"name": "machine-1", "namespace": "kube-node-lease"},
+     "spec": {"holderIdentity": "machine-1", "leaseDurationSeconds": 40, "renewTime": "2026-11-18T10:06:30.123456Z"}},
+    {"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
+     "metadata": {"name": "machine-2", "namespace": "kube-node-lease"},
+     "spec": {"holderIdentity": "machine-2", "leaseDurationSeconds": 40, "renewTime": "2026-11-18T10:05:01.987654321Z"}},
+    {"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
+     "metadata": {"name": "machine-3", "namespace": "kube-node-lease"},
+     "spec": {"holderIdentity": "machine-3", "leaseDurationSeconds": 40, "renewTime": "2026-11-18T10:06:28Z"}},
+    {"apiVersion": "coordination.k8s.io/v1", "kind": "Lease",
+     "metadata": {"name": "kube-scheduler", "namespace": "kube-system"},
+     "spec": {"holderIdentity": "machine-1_0b9f", "leaseDurationSeconds": 15, "renewTime": "2026-11-18T10:06:30Z"}}
+  ]
+}
