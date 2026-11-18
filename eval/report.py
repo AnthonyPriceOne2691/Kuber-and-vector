@@ -81,7 +81,17 @@ def main() -> None:
         L.append(f"| {strategy} | {MODES[mode]} | {fmt(boot(r, '8'))} | {fmt(boot(r, '64'))} | {delta} | "
                  f"{lat['p50']:.1f} / {lat['p95']:.1f} |")
     L += ["", "Нарезка `_title`: к тексту для поиска приписаны название документа и раздел (contextual embeddings "
-          "без LLM); адрес и смещения куска те же.", ""]
+          "без LLM); адрес и смещения куска те же. Название здесь это имя файла документа, а в вопросах "
+          "LegalBench-RAG документ назван. Статья так не делала, поэтому сравнение с ней показывает приём "
+          "против базового способа, а не модель против модели.", ""]
+    pairs = [s for s in sorted({s for s, _ in res}) if (s, "dense") in res and (s, "hybrid") in res]
+    if pairs:
+        L += ["## Гибрид против вектора, парно", "",
+              "| Нарезка | Δ recall@8 | Δ recall@64 |", "|---|---|---|"]
+        for s in pairs:
+            h, v = res[(s, "hybrid")], res[(s, "dense")]
+            L.append(f"| {s} | {fmt(boot(h, '8', v), sign=True)} | {fmt(boot(h, '64', v), sign=True)} |")
+        L.append("")
 
     L += ["## Recall@64 по наборам, %", "",
           "| Набор | Статья (OpenAI, naive) | " + " | ".join(f"{s} {MODES[m]}" for s, m in sorted(res)) + " |",
