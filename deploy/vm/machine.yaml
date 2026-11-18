@@ -1,0 +1,60 @@
+# Одна схема на все машины стенда: machine-1…machine-4 и одноразовая сборочная.
+# Роль задаётся при создании параметром ROLE (см. up.sh):
+#   cluster   machine-1…3: серверы k3s и пиры Qdrant
+#   observer  machine-4: вход, нагрузка, панель
+#   builder   одноразовая ВМ: качает комплект и удаляется
+#
+# Песочница (правило владельца с 03.11.2026):
+#   нет папок Мака, ключей ssh, агента ssh и прокси хоста;
+#   containerd самой Lima выключен (иначе Lima качает на хост nerdctl);
+#   сеть закрыта файрволом ещё до её подъёма (sandbox-boot.sh, режим boot);
+#   службы Ubuntu не ходят в сеть и ничего не обновляют (quiet-system.sh).
+minimumLimaVersion: 2.3.0
+vmType: vz
+os: Linux
+arch: aarch64
+cpus: 2
+memory: 4GiB
+disk: 20GiB
+
+images:
+  # Ubuntu 24.04 LTS, официальный облачный образ; выпуск закреплён по дате и sha256
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: aarch64
+    digest: "sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e"
+
+mounts: []
+containerd:
+  system: false
+  user: false
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+propagateProxyEnv: false
+upgradePackages: false
+
+# Общая сеть машин стенда: видят друг друга как lima-<имя>.internal,
+# Мак для них это шлюз 192.168.104.2
+networks:
+  - lima: user-v2
+
+user:
+  name: ops
+
+param:
+  # Пустая или неизвестная роль даёт самый строгий режим сети
+  ROLE: strict
+
+provision:
+  - mode: boot
+    file: sandbox-boot.sh
+  - mode: system
+    file: quiet-system.sh
+
+# Из гостя на Мак ничего не пробрасывается само; нужные пробросы up.sh ставит выше этого правила
+portForwards:
+  - guestIP: "0.0.0.0"
+    guestIPMustBeZero: false
+    proto: any
+    ignore: true
