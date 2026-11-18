@@ -1,11 +1,12 @@
 #!/bin/bash
-# Этап 1: загрузить куски в Qdrant на машине стенда и посчитать качество поиска.
-# Сначала на Маке: python3 -I eval/prepare.py (нарезка и векторы).
-#   eval/run_stage1.sh [machine-1]
+# Замер поиска на LegalBench-RAG-mini: загрузить куски в Qdrant на машине стенда и оценить
+# ветки (нарезка × режим: dense, bm25, hybrid). Сначала на Маке: python3 -I eval/prepare.py.
+#   eval/run_stage1.sh [machine-1]            MODES="dense bm25 hybrid" по умолчанию
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 VM="${1:-machine-1}"
+MODES="${MODES:-dense bm25 hybrid}"
 SRC="$ROOT/cache/stage1"
 REMOTE=/home/ops.guest/stage1
 [ -f "$SRC/meta.json" ] || { echo "нет $SRC/meta.json: сначала eval/prepare.py"; exit 1; }
@@ -21,9 +22,9 @@ for s in $strategies; do limactl copy -r "$SRC/$s" "$VM:$REMOTE/$s"; done
 # Внутри машины: ключи из Secret во временные файлы 600, загрузка админским ключом,
 # оценка ключом только на чтение; файлы ключей удаляются при выходе.
 # shellcheck disable=SC2086
-limactl shell --workdir "$REMOTE" "$VM" sudo bash -s -- "$REMOTE" $strategies <<'EOF'
+limactl shell --workdir "$REMOTE" "$VM" sudo bash -s -- "$REMOTE" "$MODES" $strategies <<'EOF'
 set -euo pipefail
-REMOTE=$1; shift
+REMOTE=$1; MODES=$2; shift 2
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 IP=$(kubectl -n qdrant get svc qdrant -o jsonpath='{.spec.clusterIP}')
 K=$(mktemp -d); trap 'rm -rf "$K"' EXIT
@@ -32,13 +33,17 @@ K=$(mktemp -d); trap 'rm -rf "$K"' EXIT
   kubectl -n qdrant get secret qdrant-keys -o go-template='{{index .data "read-only-api-key"}}' | base64 -d > "$K/ro" )
 cd "$REMOTE"
 for s in "$@"; do
-  c="lbr_mini_${s}_bge_m3"
+  c="lbr_v2_$s"
   python3 -I -B qdrant_load.py --url "http://$IP:6333" --key-file "$K/rw" --dir "$s" --collection "$c"
-  python3 -I -B qdrant_eval.py --url "http://$IP:6333" --key-file "$K/ro" --dir . --collection "$c" --out "result_$s.json"
+  for m in $MODES; do
+    python3 -I -B qdrant_eval.py --url "http://$IP:6333" --key-file "$K/ro" --dir . --collection "$c" --mode "$m" --out "result_${s}_$m.json"
+  done
 done
 chown ops: result_*.json
 EOF
 
-mkdir -p "$SRC/results"
-for s in $strategies; do limactl copy "$VM:$REMOTE/result_$s.json" "$SRC/results/result_$s.json"; done
+rm -rf "$SRC/results"; mkdir -p "$SRC/results"
+for s in $strategies; do for m in $MODES; do
+  limactl copy "$VM:$REMOTE/result_${s}_$m.json" "$SRC/results/result_${s}_$m.json"
+done; done
 /opt/homebrew/bin/python3 -I "$HERE/report.py" "$SRC" "$ROOT/eval/results/stage1.md"

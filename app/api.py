@@ -14,8 +14,12 @@ import urllib.request
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
+from app import bm25
+
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant.qdrant.svc.cluster.local:6333").rstrip("/")
-COLLECTION = os.environ.get("COLLECTION", "lbr_mini_naive500_bge_m3")
+COLLECTION = os.environ.get("COLLECTION", "lbr_v2_naive500_title")  # лучшая ветка замера 18.11
+SEARCH_MODE = os.environ.get("SEARCH_MODE", "dense")  # dense | hybrid (dense + BM25, RRF в Qdrant)
+PREFETCH = int(os.environ.get("PREFETCH", "100"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://192.168.104.2:11434").rstrip("/")
 MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 KEY_FILE = os.environ.get("QDRANT_KEY_FILE", "/run/secrets/qdrant/read-only-api-key")
@@ -69,15 +73,20 @@ def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
     except Exception:
         return JSONResponse({"error": "векторизатор недоступен"}, status_code=503)
     t1 = time.perf_counter()
+    if SEARCH_MODE == "hybrid":
+        body = {"prefetch": [{"query": vector, "using": "dense", "limit": PREFETCH},
+                             {"query": bm25.query_sparse(q), "using": "bm25", "limit": PREFETCH}],
+                "query": {"fusion": "rrf"}, "limit": k, "with_payload": PAYLOAD}
+    else:
+        body = {"query": vector, "using": "dense", "limit": k, "with_payload": PAYLOAD}
     try:
-        hits = _call(f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
-                     {"query": vector, "limit": k, "with_payload": PAYLOAD},
+        hits = _call(f"{QDRANT_URL}/collections/{COLLECTION}/points/query", body,
                      {"api-key": _key()})["result"]["points"]
     except Exception:
         return JSONResponse({"error": "база недоступна"}, status_code=503)
     t2 = time.perf_counter()
     return {
-        "query": q, "model": MODEL, "collection": COLLECTION,
+        "query": q, "model": MODEL, "collection": COLLECTION, "mode": SEARCH_MODE,
         "timing_ms": {"embed": round((t1 - t0) * 1000, 1), "search": round((t2 - t1) * 1000, 1)},
         "results": [{
             "score": round(h["score"], 4),

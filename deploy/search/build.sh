@@ -14,8 +14,7 @@ W=/home/ops.guest/build-search
 limactl shell "$VM" sudo rm -rf "$W"
 limactl shell "$VM" mkdir -p "$W/app"
 limactl copy "$HERE/Containerfile" "$VM:$W/Containerfile"
-limactl copy "$ROOT/app/__init__.py" "$VM:$W/app/__init__.py"
-limactl copy "$ROOT/app/api.py" "$VM:$W/app/api.py"
+for f in __init__.py api.py bm25.py; do limactl copy "$ROOT/app/$f" "$VM:$W/app/$f"; done
 limactl copy -r "$KIT/wheels" "$VM:$W/wheels"
 limactl copy "$KIT/images/python-3.13-slim-arm64.oci.tar" "$VM:$W/python.oci.tar"
 
