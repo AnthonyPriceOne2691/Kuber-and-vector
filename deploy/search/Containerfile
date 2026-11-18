@@ -1,0 +1,16 @@
+# Образ сервиса поиска. Собирается без сети (buildah --network none):
+# база python:3.13-slim и колёса Python из комплекта, хэши колёс сверяет pip.
+FROM docker.io/library/python:3.13-slim
+
+COPY wheels/ /tmp/wheels/
+RUN python -m pip install --no-index --no-cache-dir --require-hashes \
+        --find-links /tmp/wheels -r /tmp/wheels/requirements.lock \
+ && rm -rf /tmp/wheels \
+ && useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin search
+
+COPY app/ /srv/app/
+WORKDIR /srv
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+USER 10001
+EXPOSE 8080
+CMD ["python", "-m", "uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8080", "--no-server-header"]

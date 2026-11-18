@@ -1,0 +1,75 @@
+# Сервис поиска в кластере. Пространство имён под профилем Pod Security «restricted».
+# Под: без root, корень только на чтение, без привилегий и capabilities, без токена
+# сервисного аккаунта Kubernetes; у сервиса только ключ Qdrant на чтение.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: search
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search
+  namespace: search
+  labels: {app: search}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: search}
+  template:
+    metadata:
+      labels: {app: search}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: search
+          image: localhost/search:stage1
+          imagePullPolicy: Never
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: QDRANT_URL, value: "http://qdrant.qdrant.svc.cluster.local:6333"}
+            - {name: COLLECTION, value: lbr_mini_naive500_bge_m3}
+            - {name: OLLAMA_URL, value: "http://192.168.104.2:11434"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: qdrant-key, mountPath: /run/secrets/qdrant, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {memory: 256Mi}
+      volumes:
+        - name: qdrant-key
+          secret:
+            secretName: qdrant-read-only-key
+            defaultMode: 0440
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 16Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search
+  namespace: search
+spec:
+  selector: {app: search}
+  ports:
+    - {name: http, port: 80, targetPort: http}
