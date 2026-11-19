@@ -16,7 +16,9 @@ KEY = "test-read-only-key"
 
 
 class FakeServer:
-    def __init__(self, handler, hang: float = 1.0):
+    """ssl_context — серверный контекст TLS: тогда сервер говорит https (вход стенда в тестах витрины)."""
+
+    def __init__(self, handler, hang: float = 1.0, ssl_context=None):
         self.handler, self.hang = handler, hang
         self.requests: list[tuple[str, str, dict, bytes]] = []
         outer = self
@@ -47,7 +49,10 @@ class FakeServer:
             do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _serve
 
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        if ssl_context is not None:  # рукопожатие в accept(): неудачное закрывает соединение само
+            self.srv.socket = ssl_context.wrap_socket(self.srv.socket, server_side=True)
+        scheme = "https" if ssl_context is not None else "http"
+        self.url = f"{scheme}://127.0.0.1:{self.srv.server_address[1]}"
         threading.Thread(target=self.srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
 
     def json_bodies(self) -> list:
