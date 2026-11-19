@@ -1,6 +1,6 @@
 # HAProxy на machine-4: вход стенда, в облаке на его месте был бы балансировщик провайдера.
 # Снаружи открыт только 443 (TLS). API Kubernetes и статистика слушают только localhost машины.
-# Строки серверов (@SEARCH_SERVERS@, @API_SERVERS@) подставляет install.sh по адресам узлов.
+# Строки серверов (@SEARCH_SERVERS@, @ANSWER_SERVERS@, @API_SERVERS@) подставляет install.sh по адресам узлов.
 global
     log /dev/log local0
     log /dev/log local1 notice
@@ -33,9 +33,10 @@ defaults
 frontend https
     bind :443 ssl crt /etc/haproxy/certs/stand.pem alpn h2,http/1.1
     http-request deny deny_status 405 unless METH_GET
-    http-request deny deny_status 404 unless { path /search /healthz }
+    http-request deny deny_status 404 unless { path /search /answer /healthz }
     http-response set-header Strict-Transport-Security "max-age=31536000"
     http-response del-header Server
+    use_backend answer if { path /answer }
     default_backend search
 
 backend search
@@ -47,6 +48,16 @@ backend search
     # мёртвая машина выпадает после двух проверок подряд, примерно за 2 с
     default-server check inter 1s fastinter 500ms downinter 1s fall 2 rise 2
 @SEARCH_SERVERS@
+
+# Ответ модели идёт секунды, поэтому свой таймаут (модель 120 с, сервис 130 с, здесь 150 с).
+# Повтор только если соединение не установилось: долгую генерацию не повторяем, иначе модель
+# на Маке делает работу дважды. Состояние серверов берём у backend search (track).
+backend answer
+    balance leastconn
+    timeout server 150s
+    retries 1
+    retry-on conn-failure
+@ANSWER_SERVERS@
 
 frontend kube-api
     mode tcp

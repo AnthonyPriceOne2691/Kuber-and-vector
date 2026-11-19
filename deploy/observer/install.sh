@@ -14,17 +14,19 @@ ip_of() { limactl shell "$1" bash -c "ip -4 -o addr show lima0 | awk '{print \$4
 
 ENTRY="$(ip_of "$VM")"
 [ -n "$ENTRY" ] || { echo "у $VM нет адреса на lima0"; exit 1; }
-search="" ; api=""
+search="" ; answer="" ; api=""
 for n in $NODES; do
   ip="$(ip_of "$n")"; [ -n "$ip" ] || { echo "у $n нет адреса на lima0"; exit 1; }
   search="$search    server $n $ip:30080"$'\n'
+  answer="$answer    server $n $ip:30080 track search/$n"$'\n'
   api="$api    server $n $ip:6443"$'\n'
 done
 mkdir -p "$ROOT/runs"
 CFG="$ROOT/runs/haproxy.cfg"
 # через окружение: awk на macOS не принимает перевод строки в -v
-SERVERS_SEARCH="$search" SERVERS_API="$api" awk '
+SERVERS_SEARCH="$search" SERVERS_ANSWER="$answer" SERVERS_API="$api" awk '
   /^@SEARCH_SERVERS@$/ { printf "%s", ENVIRON["SERVERS_SEARCH"]; next }
+  /^@ANSWER_SERVERS@$/ { printf "%s", ENVIRON["SERVERS_ANSWER"]; next }
   /^@API_SERVERS@$/    { printf "%s", ENVIRON["SERVERS_API"]; next }
   { print }' "$HERE/haproxy.cfg.in" > "$CFG"
 

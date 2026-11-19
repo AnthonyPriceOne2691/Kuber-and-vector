@@ -1,8 +1,10 @@
-"""Сервис поиска: вопрос -> куски документов с адресом источника.
+"""Сервис поиска: вопрос -> куски документов с адресом источника, по желанию ответ модели.
 
 Вопрос векторизует Ollama (bge-m3) на Маке, поиск идёт в Qdrant ключом ТОЛЬКО НА ЧТЕНИЕ:
-админского ключа у сервиса нет. Наружу только /search, /healthz и /readyz, документации API нет.
-Внешних зависимостей, кроме FastAPI и uvicorn, нет: к Qdrant и Ollama ходим стандартной библиотекой.
+админского ключа у сервиса нет. Ответ своими словами пишет qwen3:8b через тот же фильтр на Маке,
+со ссылками на найденные куски (app/answer.py). Наружу только /search, /answer, /healthz и /readyz,
+документации API нет. Внешних зависимостей, кроме FastAPI и uvicorn, нет: к Qdrant и Ollama ходим
+стандартной библиотекой.
 
 Отказ машины: адрес Qdrant это ClusterIP, каждое новое соединение уходит на случайный пир.
 Мёртвый пир молчит, поэтому соединение ждём недолго (QDRANT_CONNECT_TIMEOUT) и повторяем:
@@ -14,12 +16,14 @@ import http.client
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
+from app import answer as answering
 from app import bm25
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant.qdrant.svc.cluster.local:6333").rstrip("/")
@@ -28,6 +32,10 @@ SEARCH_MODE = os.environ.get("SEARCH_MODE", "dense")  # dense | hybrid (dense + 
 PREFETCH = int(os.environ.get("PREFETCH", "100"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://192.168.105.1:11434").rstrip("/")  # фильтр на Маке
 MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
+ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "qwen3:8b")
+# генерация идёт секунды; фильтр на Маке ждёт модель 120 с, сервис чуть дольше, вход HAProxy ещё дольше
+ANSWER_TIMEOUT = float(os.environ.get("ANSWER_TIMEOUT", "130"))
+ANSWER_MAX_K = 8  # больше кусков модели не даём: промпт должен влезть в её контекст (answer.NUM_CTX)
 KEY_FILE = os.environ.get("QDRANT_KEY_FILE", "/run/secrets/qdrant/read-only-api-key")
 TIMEOUT = float(os.environ.get("UPSTREAM_TIMEOUT", "5"))
 QDRANT_CONNECT_TIMEOUT = float(os.environ.get("QDRANT_CONNECT_TIMEOUT", "0.25"))
@@ -45,16 +53,20 @@ def _key() -> str:
         return f.read().strip()
 
 
-def _call(url: str, body: dict | None = None, headers: dict | None = None) -> dict:
+def _call(url: str, body: dict | None = None, headers: dict | None = None, timeout: float | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method="POST" if body is not None else "GET",
                                  headers={"Content-Type": "application/json", **(headers or {})})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as r:
         return json.load(r)
 
 
 class QdrantError(Exception):
     pass
+
+
+class Unavailable(Exception):
+    """Нужная служба не ответила; клиент получает 503 с этим текстом."""
 
 
 def _qdrant(path: str, body: dict | None = None) -> tuple[dict, int]:
@@ -106,13 +118,21 @@ def readyz() -> JSONResponse:
     return JSONResponse({"ready": ready}, status_code=200 if ready else 503)
 
 
-@app.get("/search")
-def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1, le=20)):
+def _ms(seconds: float) -> float:
+    return round(seconds * 1000, 1)
+
+
+def _served_by() -> dict:
+    return {"node": NODE, "pod": POD}
+
+
+def _retrieve(q: str, k: int) -> tuple[list[dict], dict, int]:
+    """Вопрос -> (куски с адресами, время по шагам в мс, номер удачной попытки к Qdrant)."""
     t0 = time.perf_counter()
     try:
         vector = _call(f"{OLLAMA_URL}/api/embed", {"model": MODEL, "input": [q]})["embeddings"][0]
     except Exception:
-        return JSONResponse({"error": "векторизатор недоступен"}, status_code=503)
+        raise Unavailable("векторизатор недоступен")
     t1 = time.perf_counter()
     if SEARCH_MODE == "hybrid":
         body = {"prefetch": [{"query": vector, "using": "dense", "limit": PREFETCH},
@@ -121,22 +141,74 @@ def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
     else:
         body = {"query": vector, "using": "dense", "limit": k, "with_payload": PAYLOAD}
     try:
-        answer, attempts = _qdrant(f"/collections/{COLLECTION}/points/query", body)
-        hits = answer["result"]["points"]
+        result, attempts = _qdrant(f"/collections/{COLLECTION}/points/query", body)
+        points = result["result"]["points"]
     except Exception:
-        return JSONResponse({"error": "база недоступна", "served_by": {"node": NODE, "pod": POD}}, status_code=503)
+        raise Unavailable("база недоступна")
     t2 = time.perf_counter()
+    hits = [{
+        "score": round(h["score"], 4),
+        "document": h["payload"].get("title"),
+        "section": h["payload"].get("section") or None,
+        "file": h["payload"]["file"],
+        "span": [h["payload"]["start"], h["payload"]["end"]],
+        "text": h["payload"]["text"],
+    } for h in points]
+    return hits, {"embed": _ms(t1 - t0), "search": _ms(t2 - t1)}, attempts
+
+
+def _error(message: str, status: int = 503) -> JSONResponse:
+    return JSONResponse({"error": message, "served_by": _served_by()}, status_code=status)
+
+
+@app.get("/search")
+def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1, le=20)):
+    try:
+        hits, timing, attempts = _retrieve(q, k)
+    except Unavailable as e:
+        return _error(str(e))
     return {
         "query": q, "model": MODEL, "collection": COLLECTION, "mode": SEARCH_MODE,
-        "timing_ms": {"embed": round((t1 - t0) * 1000, 1), "search": round((t2 - t1) * 1000, 1)},
+        "timing_ms": timing,
         "qdrant_attempts": attempts,
-        "served_by": {"node": NODE, "pod": POD},
-        "results": [{
-            "score": round(h["score"], 4),
-            "document": h["payload"].get("title"),
-            "section": h["payload"].get("section") or None,
-            "file": h["payload"]["file"],
-            "span": [h["payload"]["start"], h["payload"]["end"]],
-            "text": h["payload"]["text"],
-        } for h in hits],
+        "served_by": _served_by(),
+        "results": hits,
+    }
+
+
+@app.get("/answer")
+def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1, le=ANSWER_MAX_K)):
+    """Ответ своими словами по найденным кускам, со ссылками и проверенными цитатами."""
+    try:
+        hits, timing, attempts = _retrieve(q, k)
+    except Unavailable as e:
+        return _error(str(e))
+    tokens = {"prompt": None, "output": None}
+    if hits:
+        t0 = time.perf_counter()
+        try:
+            reply = _call(f"{OLLAMA_URL}/api/chat", answering.chat_body(ANSWER_MODEL, q, hits), timeout=ANSWER_TIMEOUT)
+        except urllib.error.HTTPError as e:
+            e.close()
+            if e.code == 429:  # фильтр пускает к модели один запрос за раз
+                return _error("модель занята, повторите позже", 429)
+            return _error("модель недоступна")
+        except Exception:
+            return _error("модель недоступна")
+        timing["generate"] = _ms(time.perf_counter() - t0)
+        tokens = {"prompt": reply.get("prompt_eval_count"), "output": reply.get("eval_count")}
+        checked = answering.check(answering.parse((reply.get("message") or {}).get("content", "")), hits, q)
+    else:  # кусков нет: модели нечего читать
+        checked = {"status": "refused", "answer": answering.refusal(q), "citations": []}
+    if checked["status"] == "invalid":
+        return _error("модель ответила не по формату", 502)
+    checked.pop("model_answer", None)  # неподтверждённый ответ модели наружу не отдаём
+    return {
+        "query": q, "model": ANSWER_MODEL, "collection": COLLECTION,
+        **checked,
+        "sources": hits,
+        "timing_ms": timing,
+        "tokens": tokens,
+        "qdrant_attempts": attempts,
+        "served_by": _served_by(),
     }

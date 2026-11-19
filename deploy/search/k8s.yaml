@@ -63,6 +63,7 @@ spec:
             - {name: COLLECTION, value: contracts_rf2}
             - {name: SEARCH_MODE, value: dense}
             - {name: OLLAMA_URL, value: "http://192.168.105.1:11434"}
+            - {name: ANSWER_MODEL, value: "qwen3:8b"}
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
             - name: POD_NAME

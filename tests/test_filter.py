@@ -86,7 +86,7 @@ class EmbedTest(FilterTest):
     def test_body_limits(self):
         self.assertEqual(self.send("/api/embed", raw=b"{not json")[0], 400)
         self.assertEqual(self.send("/api/embed", raw=b"")[0], 413)
-        self.assertEqual(self.send("/api/embed", ["bge-m3"])[0], 403)  # не объект
+        self.assertEqual(self.send("/api/embed", ["bge-m3"])[0], 400)  # не объект JSON
         self.patch(MAX_BODY=100)
         self.assertEqual(self.send("/api/embed", {"model": "bge-m3", "input": "x" * 200})[0], 413)
         self.assertEqual(self.upstream.requests, [])
@@ -115,6 +115,81 @@ class DenyTest(FilterTest):
             with mock.patch.object(sys, "argv", ["ollama_filter.py", "--listen", addr]):
                 with self.assertRaises(SystemExit):
                     flt.main()
+
+
+
+def chat_request(**over) -> dict:
+    body = {"model": "qwen3:8b", "stream": False, "think": False, "format": {"type": "object"},
+            "messages": [{"role": "system", "content": "rules"}, {"role": "user", "content": "question"}],
+            "options": {"temperature": 0, "seed": 7, "num_ctx": 4096, "num_predict": 400}}
+    body.update(over)
+    return body
+
+
+class ChatTest(FilterTest):
+    def setUp(self) -> None:
+        super().setUp()
+        self.upstream.handler = ollama_handler(chat_content='{"found": false, "answer": "", "citations": []}')
+
+    def test_chat_forwarded_clean(self):
+        code, body = self.send("/api/chat", chat_request())
+        self.assertEqual(code, 200)
+        self.assertEqual(body["message"]["role"], "assistant")
+        self.assertEqual(self.upstream.json_bodies(), [{
+            "model": "qwen3:8b", "stream": False, "think": False, "format": {"type": "object"},
+            "messages": [{"role": "system", "content": "rules"}, {"role": "user", "content": "question"}],
+            "options": {"temperature": 0, "seed": 7, "num_ctx": 4096, "num_predict": 400}}])
+        self.assertEqual([e["event"] for e in self.events()], ["chat"])
+
+    def test_context_fixed_and_answer_capped(self):
+        self.send("/api/chat", chat_request(options={"num_ctx": 131072}))
+        sent = self.upstream.json_bodies()[-1]["options"]
+        self.assertEqual(sent, {"num_ctx": flt.CHAT_NUM_CTX, "num_predict": flt.CHAT_MAX_PREDICT})
+        self.assertEqual(self.send("/api/chat", chat_request(options={"num_predict": 100000}))[0], 400)
+
+    def test_other_models_denied(self):
+        for model in ("qwen3:14b", "bge-m3", "llama3"):
+            self.assertEqual(self.send("/api/chat", chat_request(model=model))[0], 403, model)
+        self.assertEqual(self.upstream.requests, [])
+
+    def test_dangerous_fields_denied(self):
+        cases = [chat_request(keep_alive=-1), chat_request(tools=[{"type": "function"}]),
+                 chat_request(images=["aGk="]), chat_request(raw=True), chat_request(stream=True),
+                 chat_request(think="high"), chat_request(format="yaml"),
+                 chat_request(options={"num_gpu": 99}), chat_request(options={"temperature": True}),
+                 chat_request(options={"top_k": 1.5}), chat_request(options=[1])]
+        for body in cases:
+            self.assertEqual(self.send("/api/chat", body)[0], 400, json.dumps(body)[:80])
+        self.assertEqual(self.upstream.requests, [])
+
+    def test_messages_limits(self):
+        bad = [[], [{"role": "tool", "content": "x"}], [{"role": "user", "content": ""}],
+               [{"role": "user", "content": "x", "images": ["aGk="]}], [{"role": "user", "content": 5}],
+               [{"role": "user", "content": "x"}] * (flt.CHAT_MAX_MESSAGES + 1),
+               [{"role": "user", "content": "x" * (flt.CHAT_MAX_CHARS + 1)}], "hello"]
+        for msgs in bad:
+            self.assertEqual(self.send("/api/chat", chat_request(messages=msgs))[0], 400, repr(msgs)[:60])
+        self.assertEqual(self.upstream.requests, [])
+
+    def test_one_at_a_time(self):
+        self.assertTrue(flt.CHAT_SLOT.acquire(blocking=False))  # модель «занята» другим запросом
+        try:
+            code, body = self.send("/api/chat", chat_request())
+        finally:
+            flt.CHAT_SLOT.release()
+        self.assertEqual((code, body["error"]), (429, "модель занята"))
+        self.assertEqual(self.upstream.requests, [])
+        self.assertEqual(self.send("/api/chat", chat_request())[0], 200)  # слот освободился
+
+    def test_upstream_down_releases_slot(self):
+        self.patch(UPSTREAM=closed_port_url())
+        self.assertEqual(self.send("/api/chat", chat_request())[0], 502)
+        self.assertTrue(flt.CHAT_SLOT.acquire(blocking=False))
+        flt.CHAT_SLOT.release()
+
+    def test_generate_still_denied(self):
+        self.assertEqual(self.send("/api/generate", {"model": "qwen3:8b", "prompt": "hi"})[0], 403)
+        self.assertEqual(self.upstream.requests, [])
 
 
 if __name__ == "__main__":

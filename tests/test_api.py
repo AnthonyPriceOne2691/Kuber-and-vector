@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
@@ -167,6 +168,72 @@ class EndpointsTest(StandTest):
         self.assertEqual(r.headers["cache-control"], "no-store")
         for path in ("/docs", "/redoc", "/openapi.json"):
             self.assertEqual(self.client.get(path).status_code, 404, path)
+
+
+def model_reply(found=True, quote="governed by the laws of Delaware", n=1) -> str:
+    cits = [{"n": n, "quote": quote}] if found else []
+    return json.dumps({"found": found, "answer": "Delaware law governs [1]." if found else "", "citations": cits})
+
+
+@unittest.skipIf(TestClient is None, "нет fastapi.testclient (httpx)")
+class AnswerEndpointTest(StandTest):
+    def setUp(self) -> None:
+        super().setUp()
+        self.client = TestClient(api.app)
+        self.patch(ANSWER_MODEL="qwen3:8b")
+
+    def ask(self, content: str | None = None, chat_status: int = 200, q: str = "Which law governs the Acme license?", k: int = 3):
+        self.ollama.handler = ollama_handler(chat_content=content if content is not None else model_reply(),
+                                             chat_status=chat_status)
+        return self.client.get("/answer", params={"q": q, "k": k})
+
+    def test_answered_with_verified_citation(self):
+        r = self.ask()
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual((body["status"], body["answer"], body["model"]), ("answered", "Delaware law governs [1].", "qwen3:8b"))
+        c = body["citations"][0]
+        self.assertEqual((c["verified"], c["file"], c["span"]), (True, "cuad/Acme_License.txt", [0, 500]))
+        self.assertEqual(len(body["sources"]), 3)
+        self.assertEqual(set(body["timing_ms"]), {"embed", "search", "generate"})
+        self.assertEqual(body["tokens"], {"prompt": 900, "output": 120})
+        self.assertEqual(body["served_by"], {"node": "machine-2", "pod": "search-abc"})
+        chat = [b for p, b in zip(self.ollama.paths(), self.ollama.json_bodies()) if p == "/api/chat"]
+        self.assertEqual(len(chat), 1)
+        self.assertEqual((chat[0]["model"], chat[0]["stream"], chat[0]["options"]["num_ctx"]), ("qwen3:8b", False, 4096))
+        self.assertIn("[3] Document: Acme License", chat[0]["messages"][1]["content"])
+
+    def test_refused(self):
+        body = self.ask(model_reply(found=False)).json()
+        self.assertEqual((body["status"], body["answer"], body["citations"]),
+                         ("refused", "The documents do not contain this.", []))
+        body = self.ask(model_reply(found=False), q="Какое право применимо к лицензии Acme?").json()
+        self.assertEqual(body["answer"], "В документах этого нет.")
+
+    def test_unsupported_answer_hidden(self):
+        body = self.ask(model_reply(quote="governed by the laws of New York")).json()
+        self.assertEqual(body["status"], "unsupported")
+        self.assertEqual(body["answer"], "The documents do not contain this.")
+        self.assertNotIn("model_answer", body)  # неподтверждённый текст модели наружу не уходит
+        self.assertNotIn("Delaware law", json.dumps(body))
+
+    def test_model_failures(self):
+        r = self.ask("this is not json")
+        self.assertEqual((r.status_code, r.json()["error"]), (502, "модель ответила не по формату"))
+        r = self.ask(chat_status=429)
+        self.assertEqual((r.status_code, r.json()["error"]), (429, "модель занята, повторите позже"))
+        r = self.ask(chat_status=500)
+        self.assertEqual((r.status_code, r.json()["error"]), (503, "модель недоступна"))
+
+    def test_no_hits_no_model_call(self):
+        self.qdrant.handler = qdrant_handler([])
+        body = self.ask().json()
+        self.assertEqual((body["status"], body["sources"]), ("refused", []))
+        self.assertNotIn("/api/chat", self.ollama.paths())
+
+    def test_k_limited(self):
+        self.assertEqual(self.ask(k=9).status_code, 422)
+        self.assertEqual(self.ask(k=8).status_code, 200)
 
 
 if __name__ == "__main__":

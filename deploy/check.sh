@@ -28,6 +28,9 @@ check "без УЦ стенда curl отказывается (сертифик�
 check "POST запрещён (405)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' -X POST 'https://$ENTRY/search') = 405 ]"
 check "чужой путь закрыт (404)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' 'https://$ENTRY/docs') = 404 ]"
 check "порт 80 на входе закрыт" not curl -s -m 3 "http://$ENTRY/"
+if [ "${CHECK_ANSWER:-0}" = 1 ]; then  # грузит qwen3:8b на Маке (около 6 ГБ, оценка), поэтому по запросу
+  check "ответ модели через вход: статус и ссылки" bash -c "curl -sf -m 150 --cacert '$CA' 'https://$ENTRY/answer?q=$Q&k=5' | $PY -I -c 'import json,sys; r=json.load(sys.stdin); assert r[\"status\"] in (\"answered\",\"refused\",\"unsupported\"); assert r[\"status\"] != \"answered\" or any(c[\"verified\"] for c in r[\"citations\"])'"
+fi
 served=$(for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
   curl -s --cacert "$CA" "https://$ENTRY/search?q=$Q&k=1" | $PY -I -c 'import json,sys; print(json.load(sys.stdin)["served_by"]["node"])' 2>/dev/null
 done | sort | uniq -c | tr '\n' ' ')
@@ -39,6 +42,8 @@ check "localhost Мака закрыт (шлюз Lima 192.168.5.2; гиперв�
 check "Мак по сети машин закрыт, кроме фильтра (AirPlay 7000)" not limactl shell machine-1 curl -s -m 3 -o /dev/null http://192.168.105.1:7000/
 check "фильтр пускает только векторизацию (/api/tags → 403)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/tags) = 403 ]"
 check "фильтр отдаёт векторы bge-m3" bash -c "limactl shell machine-1 curl -sf -m 10 http://192.168.105.1:11434/api/embed -d '{\"model\":\"bge-m3\",\"input\":\"test\"}' | grep -q embeddings"
+check "фильтр не даёт чат с чужой моделью (403)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/chat -d '{\"model\":\"qwen3:14b\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}') = 403 ]"
+check "фильтр не даёт держать модель в памяти (keep_alive → 400)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/chat -d '{\"model\":\"qwen3:8b\",\"keep_alive\":-1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}') = 400 ]"
 check "IPv6 выключен" bash -c "[ \$(limactl shell machine-1 cat /proc/sys/net/ipv6/conf/all/disable_ipv6) = 1 ]"
 check "папок Мака в машине нет" not limactl shell machine-1 test -d /Users
 
