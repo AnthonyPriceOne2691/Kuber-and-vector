@@ -13,13 +13,25 @@
     "search": "exact search",
     "unit": "%",
     "rows": [
-      {"id": "ours", "label": "Our chunks with document title", "value": 82.6},
-      {"id": "paper", "label": "Paper baseline", "value": 63.5}
+      {
+        "id": "ours",
+        "label": "Our chunks with document title",
+        "value": 82.6
+      },
+      {
+        "id": "paper",
+        "label": "Paper baseline",
+        "value": 63.5
+      }
     ],
     "caveat": "Our chunks carry the document title. The paper's baseline does not."
   },
   "tiles": [
-    {"id": "quality", "kind": "quality", "wide": true},
+    {
+      "id": "quality",
+      "kind": "quality",
+      "wide": true
+    },
     {
       "id": "one-machine-off",
       "title": "One machine off under load",
@@ -27,8 +39,14 @@
       "unit": "errors seen by users",
       "tone": "good",
       "facts": [
-        {"label": "requests", "value": 2656},
-        {"label": "retried", "value": 1}
+        {
+          "label": "requests",
+          "value": 2656
+        },
+        {
+          "label": "retried",
+          "value": 1
+        }
       ]
     },
     {
@@ -38,7 +56,10 @@
       "unit": "errors seen by users",
       "tone": "good",
       "facts": [
-        {"label": "requests", "value": 1586}
+        {
+          "label": "requests",
+          "value": 1586
+        }
       ]
     },
     {
@@ -48,7 +69,10 @@
       "unit": "writes lost",
       "tone": "good",
       "facts": [
-        {"label": "acknowledged", "value": 1489}
+        {
+          "label": "acknowledged",
+          "value": 1489
+        }
       ]
     },
     {
@@ -59,10 +83,26 @@
       "unit": "attacks blocked",
       "tone": "good",
       "facts": [
-        {"label": "Falco alert after the shell starts", "prefix": "< ", "value": 1, "unit": "ms"},
-        {"label": "syscall to alert, median", "value": 1, "unit": "ms"},
-        {"label": "syscall to alert, max", "value": 11, "unit": "ms"},
-        {"label": "alerts timed", "value": 15}
+        {
+          "label": "Falco alert after the shell starts",
+          "prefix": "< ",
+          "value": 1,
+          "unit": "ms"
+        },
+        {
+          "label": "syscall to alert, median",
+          "value": 1,
+          "unit": "ms"
+        },
+        {
+          "label": "syscall to alert, max",
+          "value": 11,
+          "unit": "ms"
+        },
+        {
+          "label": "alerts timed",
+          "value": 15
+        }
       ]
     },
     {
@@ -71,8 +111,14 @@
       "value": 1,
       "unit": "open port",
       "facts": [
-        {"label": "TCP ports scanned", "value": 262140},
-        {"label": "the open one, HTTPS on the entry", "value": 443}
+        {
+          "label": "TCP ports scanned",
+          "value": 262140
+        },
+        {
+          "label": "the open one, HTTPS on the entry",
+          "value": 443
+        }
       ]
     },
     {
@@ -82,12 +128,57 @@
       "unit": "critical vulnerabilities",
       "tone": "good",
       "facts": [
-        {"label": "images scanned", "value": 7}
+        {
+          "label": "images scanned",
+          "value": 7
+        }
       ]
     },
-    {"id": "full-corpus", "title": "Full corpus", "value": null, "unit": "chunks searchable"},
-    {"id": "latency-p95", "title": "Latency under load", "value": null, "unit": "ms p95"},
-    {"id": "vector-limit", "title": "Vector limit", "value": null, "unit": "vectors on the stand"},
-    {"id": "model-answer", "title": "Model answer", "value": null, "unit": "answers with a verified quote"}
+    {
+      "id": "full-corpus",
+      "title": "Full corpus",
+      "value": 159767,
+      "unit": "chunks searchable",
+      "tone": "neutral",
+      "facts": [
+        {
+          "label": "recall@64, full benchmark, exact search",
+          "value": 76.5,
+          "unit": "%"
+        },
+        {
+          "label": "questions",
+          "value": 6889
+        },
+        {
+          "label": "documents",
+          "value": 714
+        },
+        {
+          "label": "loaded in",
+          "value": 181,
+          "unit": "s"
+        }
+      ]
+    },
+    {
+      "id": "latency-p95",
+      "title": "Latency under load",
+      "value": null,
+      "unit": "ms p95"
+    },
+    {
+      "id": "vector-limit",
+      "title": "Vector limit",
+      "value": null,
+      "unit": "vectors on the stand"
+    },
+    {
+      "id": "model-answer",
+      "title": "Model answer",
+      "value": null,
+      "unit": "answers with a verified quote",
+      "hidden": true
+    }
   ]
 }

@@ -234,8 +234,12 @@ class NumbersTest(unittest.TestCase):
         self.assertEqual(self.tiles["quality"]["state"], "measured")
 
     def test_not_measured_yet_is_pending(self):
-        for tid in ("full-corpus", "latency-p95", "vector-limit", "model-answer"):
+        for tid in ("latency-p95", "vector-limit"):
             self.assertEqual((self.tiles[tid]["state"], self.tiles[tid]["value"]), ("pending", None), tid)
+
+    def test_full_corpus_measured(self):
+        # 19.11: 159 767 кусков полного LegalBench-RAG, recall@64 76,5 % на 6 889 вопросах (eval/run_full.sh)
+        self.assertEqual((self.tiles["full-corpus"]["state"], self.tiles["full-corpus"]["value"]), ("measured", "159,767"))
 
     def test_every_number_on_screen_comes_from_the_file(self):
         allowed = " ".join(_raw_strings(self.raw))
