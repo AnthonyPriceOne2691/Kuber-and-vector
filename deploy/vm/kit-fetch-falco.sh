@@ -55,23 +55,70 @@ done
 if [ -z "$bound" ]; then
   echo "  подпись не прошла:"; tail -3 "$W/sig.err"; echo "СТОП: образ без подписи falcosecurity/falco в комплект не берём"; exit 1
 fi
-# кто подписал: ищем в выводе cosign поля subject/issuer/workflow, где бы они ни лежали
+# Кто подписал. cosign v2 кладёт в вывод поля Subject, Issuer и githubWorkflowRef; в сборке 18.11
+# cosign v3.1.4 их не дал. Поэтому ищем ещё сам сертификат (base64 DER или PEM) и берём URI из SAN:
+# там workflow с тегом. Формат вывода v3 не сверен, поэтому без находок пишем, чем ограничила
+# личность сама проверка.
 signed_by=$(python3 -I - "$W/sig.json" <<'PY'
-import json, re, sys
-found = {}
+import base64, json, os, re, ssl, sys, tempfile
+
+found, sans = {}, []
+CERT_RE = re.compile(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----")
+
+
+def cert_uris(text):
+    """URI из SAN сертификата (PEM или base64 DER); не сертификат даёт []."""
+    if "BEGIN CERTIFICATE" in text:
+        pem = text
+    else:
+        try:
+            der = base64.b64decode(text, validate=True)
+        except ValueError:
+            return []
+        if not der.startswith(b"\x30\x82"):
+            return []
+        pem = "-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(der).decode() + "-----END CERTIFICATE-----\n"
+    fd, path = tempfile.mkstemp(suffix=".pem")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(pem)
+        info = ssl._ssl._test_decode_cert(path)
+    except Exception:
+        return []
+    finally:
+        os.unlink(path)
+    return [v for k, v in info.get("subjectAltName", ()) if k == "URI"]
+
+
+def add(uris):
+    sans.extend(u for u in uris if u not in sans)
+
+
 def walk(x):
     if isinstance(x, dict):
         for k, v in x.items():
-            if isinstance(v, str) and re.search(r"(?i)subject|issuer|workflowref|57264\.1\.(9|14)", k):
-                found.setdefault(k, v)
+            if isinstance(v, str):
+                if re.search(r"(?i)subject|issuer|workflowref|57264\.1\.(9|14)", k):
+                    found.setdefault(k, v)
+                if v.startswith(("MII", "-----BEGIN CERTIFICATE")):
+                    add(cert_uris(v))
             walk(v)
     elif isinstance(x, list):
         for v in x:
             walk(v)
-walk(json.load(open(sys.argv[1])))
-print("; ".join(f"{k}={v}" for k, v in list(found.items())[:4]) or "поля не найдены")
+
+
+raw = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+try:
+    walk(json.loads(raw))
+except ValueError:  # не JSON: ищем сертификаты прямо в тексте
+    pass
+for block in CERT_RE.findall(raw):
+    add(cert_uris(block))
+print("; ".join([f"сертификат {u}" for u in sans] + [f"{k}={v}" for k, v in list(found.items())[:4]]))
 PY
 )
+signed_by="${signed_by:-в выводе cosign полей нет, личность задана самой проверкой (издатель token.actions.githubusercontent.com, identity $bound)}"
 [ "$bound" = "$tag_re" ] && how="привязана к тегу $FALCO_VERSION" || how="workflow репозитория falcosecurity/falco (без привязки к тегу)"
 echo "  подпись верна: $how"
 echo "  подписал: $signed_by"
