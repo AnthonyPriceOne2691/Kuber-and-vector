@@ -18,9 +18,10 @@ ensure() {
   if limactl list -q 2>/dev/null | grep -qx "$name"; then return 0; fi
   if [ "$role" = observer ]; then
     # Вход стенда: 443 на machine-4 виден на Маке как https://127.0.0.1:8443 («интернет»);
-    # Grafana: только localhost machine-4, на Маке http://127.0.0.1:13000
+    # Grafana и панель: только localhost machine-4, на Маке http://127.0.0.1:13000 и :18090.
+    # Адрес событий панели (lima0:8090) правило 127.0.0.1 не берёт, его глушит общее правило схемы.
     limactl create --tty=false --name "$name" --set ".param.ROLE = \"$role\"" \
-      --set '.portForwards = [{"guestPort": 443, "hostPort": 8443}, {"guestIP": "127.0.0.1", "guestPort": 3000, "hostPort": 13000}] + .portForwards' "$TEMPLATE"
+      --set '.portForwards = [{"guestPort": 443, "hostPort": 8443}, {"guestIP": "127.0.0.1", "guestPort": 3000, "hostPort": 13000}, {"guestIP": "127.0.0.1", "guestPort": 8090, "hostPort": 18090}] + .portForwards' "$TEMPLATE"
   else
     limactl create --tty=false --name "$name" --set ".param.ROLE = \"$role\"" "$TEMPLATE"
   fi

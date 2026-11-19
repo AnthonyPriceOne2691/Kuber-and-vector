@@ -1,7 +1,7 @@
 #!/bin/bash
 # Стенд с нуля одной командой: четыре машины из одной схемы, k3s HA на machine-1…3,
 # Qdrant из трёх пиров, данные двумя схемами, сервис поиска на трёх машинах, вход на machine-4,
-# сторож Falco на машинах кластера.
+# сторож Falco на машинах кластера, мониторинг и панель на machine-4.
 #   deploy/stand-up.sh
 # Повторный запуск безопасен: готовые шаги пропускаются или повторяются без вреда.
 # Нужно заранее: Lima и socket_vmnet (deploy/vm/README.md), комплект kit/vm, Ollama с bge-m3
@@ -60,6 +60,9 @@ step "шлюз Qdrant для мониторинга и панели"
 
 step "мониторинг на machine-4"
 "$HERE/monitoring/install.sh" machine-4
+
+step "панель на machine-4: Kubernetes только на чтение, Qdrant через шлюз, тревоги Falco"
+"$HERE/panel/install.sh" machine-4
 
 step "проверка"
 "$HERE/check.sh"

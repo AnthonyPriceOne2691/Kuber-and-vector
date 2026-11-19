@@ -8,7 +8,7 @@
 | `return.sh [машины…]` | возвращение: включить, дождаться узла и пира Qdrant, дождаться, пока копии шардов Active и совпадают (`replicas.py`), разложить поиск обратно по машинам |
 | `outage-writes.sh [machine-2]` | записи в отдельную коллекцию `outage_rf2`, пока машина выключена и возвращается; потом сверка копий и проверка, что каждая подтверждённая запись на месте |
 | `two-off.sh` | схема RF3: выключены две машины из трёх; поиск читает свою полную копию через `qdrant-local`; у Kubernetes в это время нет кворума |
-| `load.sh start [RATE]`, `load.sh stop FILE` | генератор `panel/loadgen.py` на machine-4 с проверкой TLS по УЦ стенда; итог печатает `load_summary.py` |
+| `load.sh start [RATE]`, `load.sh stop FILE` | генератор `panel/loadgen.py` на machine-4 с проверкой TLS по УЦ стенда; снимок раз в 0,5 с в `/run/stand-load/load.json`, его показывает панель (`deploy/panel`); итог печатает `load_summary.py` |
 
 Что настроено для быстрого отказа:
 

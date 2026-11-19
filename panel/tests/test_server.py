@@ -1,6 +1,10 @@
-"""HTTP агрегатора: статика с CSP, /api/state по контракту из README, POST /api/event, защита путей."""
+"""HTTP агрегатора: статика с CSP, /api/state по контракту из README, POST /api/event, защита путей,
+отдельный адрес только для событий."""
 import base64
+import contextlib
 import hashlib
+import http.client
+import io
 import json
 import os
 import re
@@ -36,10 +40,10 @@ KUBE = {"ok", "age_s", "error", "server", "heartbeats", "nodes", "unscheduled"}
 
 
 class _Server:
-    def __init__(self, panel, token=None):
-        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), aggregator.make_handler(panel, STATIC, token))
+    def __init__(self, panel, token=None, srv=None, **kw):
+        self.srv = srv or ThreadingHTTPServer(("127.0.0.1", 0), aggregator.make_handler(panel, STATIC, token, **kw))
         self.srv.daemon_threads = True
-        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        threading.Thread(target=self.srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.srv.server_address[1]}"
 
     def req(self, path, data=None, headers=None, method=None):
@@ -176,6 +180,93 @@ class TokenTest(unittest.TestCase):
         self.assertIn("style-src 'sha256-", csp)
         self.assertIn("script-src 'sha256-", csp)
         self.assertIn("script-src 'none'", aggregator.csp_for(b"<p>no scripts</p>"))
+
+    def test_token_is_masked_in_request_log(self):
+        s = _Server(self.panel, token="t0k3n-for-tests", verbose=True)
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                code = s.req("/api/event?token=t0k3n-for-tests&x=1", data=b'{"title": "x"}')[0]
+        finally:
+            s.close()
+        self.assertEqual(code, 201)
+        self.assertIn("POST /api/event?token=…&x=1", err.getvalue())
+        self.assertNotIn("t0k3n-for-tests", err.getvalue())
+
+
+class EventsAddressTest(unittest.TestCase):
+    """Два адреса (--bind и --event-bind): страница только на первом, на втором только события с токеном."""
+
+    @classmethod
+    def setUpClass(cls):
+        args = aggregator.parse_args(["--mock", "--port", "0", "--event-bind", "127.0.0.1", "--event-port", "0"])
+        cls.panel = aggregator.build(args)
+        cls.panel.tick()
+        ui, events = aggregator.listeners(args, cls.panel, "t0k3n-for-tests")
+        cls.ui, cls.ev = _Server(cls.panel, srv=ui), _Server(cls.panel, srv=events)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.ui.close()
+        cls.ev.close()
+
+    def test_page_and_state_only_on_main_address(self):
+        self.assertEqual(self.ui.req("/api/state")[0], 200)
+        self.assertEqual(self.ui.req("/")[0], 200)
+        for path in ("/", "/api/state", "/healthz", "/index.html"):
+            self.assertEqual(self.ev.req(path)[0], 404, path)
+            self.assertEqual(self.ev.req(path, method="HEAD")[0], 404, path)
+
+    def test_events_address_needs_token_even_for_localhost(self):
+        body = b'{"title": "Pod quarantined", "kind": "security"}'
+        self.assertEqual(self.ev.req("/api/event", data=body)[0], 403)
+        self.assertEqual(self.ev.req("/api/event?token=wrong", data=body)[0], 403)
+        code, _, resp = self.ev.req("/api/event?token=t0k3n-for-tests", data=body)
+        self.assertEqual(code, 201)
+        ev_id = json.loads(resp)["ids"][0]
+        self.assertTrue(any(e["id"] == ev_id for e in self.panel.tick()["events"]))  # в той же ленте
+        self.assertEqual(self.ev.req("/api/other?token=t0k3n-for-tests", data=body)[0], 404)
+
+    def test_refusal_keeps_keepalive_connection_in_sync(self):
+        # тело отказанного запроса дочитывается: то же соединение дальше годится, остаток тела
+        # не разбирается как следующий запрос (было бы 400), клиент не видит сброса вместо ответа
+        c = http.client.HTTPConnection("127.0.0.1", self.ev.srv.server_address[1], timeout=5)
+        try:
+            socks = []
+            for path, want in (("/api/event", 403), ("/api/other", 404), ("/api/event?token=t0k3n-for-tests", 201)):
+                c.request("POST", path, body=b'{"title": "keep-alive"}', headers={"Content-Type": "application/json"})
+                r = c.getresponse()
+                r.read()
+                self.assertEqual(r.status, want, path)
+                socks.append(c.sock)
+            self.assertIsNotNone(socks[0])
+            self.assertEqual(len(set(map(id, socks))), 1)  # одно соединение на все три запроса
+        finally:
+            c.close()
+
+    def test_refusal_with_big_body_closes_connection(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.ev.srv.server_address[1], timeout=5)
+        try:
+            c.request("POST", "/api/event", body=b"x" * (aggregator.MAX_EVENT_BODY + 1))
+            r = c.getresponse()
+            r.read()
+            self.assertEqual((r.status, r.getheader("Connection")), (403, "close"))
+        except ConnectionError:
+            pass  # большое тело не читаем: сброс соединения тоже честный отказ
+        finally:
+            c.close()
+
+    def test_event_address_requires_token_file(self):
+        args = aggregator.parse_args(["--port", "0", "--event-bind", "127.0.0.1", "--event-port", "0"])
+        with self.assertRaises(ValueError):
+            aggregator.listeners(args, self.panel, None)
+
+    def test_busy_port_closes_what_was_opened(self):
+        busy = self.ui.srv.server_address[1]
+        args = aggregator.parse_args(["--port", "0", "--event-bind", "127.0.0.1", "--event-port", str(busy)])
+        with self.assertRaises(OSError) as cm:
+            aggregator.listeners(args, self.panel, "t0k3n-for-tests")
+        self.assertIn(f"127.0.0.1:{busy}", str(cm.exception))
 
 
 if __name__ == "__main__":

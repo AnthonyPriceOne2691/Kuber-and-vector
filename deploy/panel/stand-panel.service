@@ -1,0 +1,66 @@
+# Панель стенда на machine-4 (deploy/panel/install.sh): агрегатор panel/aggregator.py из /opt/stand-panel.
+# Страница и /api/state только на 127.0.0.1:8090, на Маке http://127.0.0.1:18090 через проброс Lima.
+# Адрес lima0 machine-4 (порт тот же, 8090) принимает только POST /api/event с токеном: http_output Falco.
+# Kubernetes только на чтение: API через вход HAProxy 127.0.0.1:6443, сертификат по CA кластера,
+# токен TokenRequest (rbac.yaml). Qdrant через шлюз каждой машины, ключа Qdrant здесь нет.
+# Свой пользователь без входа и без дома, система только на чтение, без прав ядра; сеть только
+# с localhost и тремя машинами кластера. Адреса (@…@) подставляет install.sh.
+# Память: замера нет, потолок 256 МБ (оценка); при нехватке памяти ядро убьёт панель раньше входа.
+[Unit]
+Description=Панель стенда (machine-4)
+After=network-online.target haproxy.service
+Wants=network-online.target
+
+[Service]
+User=stand-panel
+Group=stand-panel
+ExecStart=/usr/bin/python3 -I -B /opt/stand-panel/aggregator.py \
+  --bind 127.0.0.1 --port 8090 \
+  --event-bind @ENTRY@ \
+  --event-token-file /etc/stand-panel/event-token \
+  --load-stats /run/stand-load/load.json \
+  --kube-api https://127.0.0.1:6443 \
+  --kube-ca /etc/stand-panel/kube-ca.crt \
+  --kube-token-file /etc/stand-panel/kube-token \
+@QDRANT_ARGS@
+  --qdrant-collection @COLLECTION@ \
+  "--observer-check=HAProxy · TLS=127.0.0.1:443"
+# адрес lima0 появляется не сразу после загрузки: не открылся — повтор через 5 с
+Restart=on-failure
+RestartSec=5
+MemoryHigh=192M
+MemoryMax=256M
+OOMScoreAdjust=500
+TasksMax=128
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# пакеты только с localhost (страница через проброс Lima, вход HAProxy) и с машин кластера
+# (шлюз Qdrant :30633, события Falco); Мак и остальная сеть машин отрезаны ещё до файрвола
+IPAddressDeny=any
+IPAddressAllow=localhost @CLUSTER_IPS@
+
+[Install]
+WantedBy=multi-user.target
