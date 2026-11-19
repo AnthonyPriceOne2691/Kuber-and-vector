@@ -23,7 +23,7 @@ import urllib.request
 from array import array
 from typing import Iterator
 
-PAYLOAD = ("dataset", "file", "title", "section", "start", "end", "text")
+PAYLOAD = ("dataset", "file", "title", "section", "start", "end", "text", "parent")  # parent: у детей (eval/children.py)
 
 
 def call(method: str, url: str, key: str, body: dict | None = None, timeout: int = 120) -> dict:

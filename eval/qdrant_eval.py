@@ -30,11 +30,20 @@ PAYLOAD = ["file", "start", "end"]
 PREFETCH = 100
 
 
-def query(url: str, key: str, collection: str, body: dict) -> list[dict]:
-    req = urllib.request.Request(f"{url}/collections/{collection}/points/query", data=json.dumps(body).encode(),
+def query(url: str, key: str, collection: str, body: dict, group_by: str | None = None) -> list[dict]:
+    """Точки по порядку. С group_by — группы Qdrant (/points/query/groups): из каждой группы лучшая
+    точка, групп limit штук. Так ищут «от малого к большому»: дети ранжируют родителя (eval/children.py),
+    в выдаче родитель один раз, его адрес лежит в каждой точке-ребёнке."""
+    path = "points/query/groups" if group_by else "points/query"
+    if group_by:
+        body = dict(body, group_by=group_by, group_size=1)
+    req = urllib.request.Request(f"{url}/collections/{collection}/{path}", data=json.dumps(body).encode(),
                                  method="POST", headers={"api-key": key, "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r)["result"]["points"]
+        res = json.load(r)["result"]
+    if group_by:
+        return [g["hits"][0] for g in res["groups"] if g.get("hits")]
+    return res["points"]
 
 
 def body_for(mode: str, vec: list[float], sparse: dict, limit: int, exact: bool) -> dict:
@@ -61,6 +70,7 @@ def main() -> None:
     ap.add_argument("--mode", choices=("dense", "bm25", "hybrid"), default="dense")
     ap.add_argument("--dim", type=int, default=1024)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--group-by", help="поле группы, например parent: дети ранжируют родителя")
     args = ap.parse_args()
     key = open(args.key_file).read().strip()
     url = args.url.rstrip("/")
@@ -77,11 +87,11 @@ def main() -> None:
     for i, q in enumerate(queries):
         vec = qv[i * args.dim:(i + 1) * args.dim].tolist()
         t0 = time.perf_counter()
-        hits = query(url, key, args.collection, body_for(args.mode, vec, q["sparse"], kmax, exact=True))
+        hits = query(url, key, args.collection, body_for(args.mode, vec, q["sparse"], kmax, exact=True), args.group_by)
         lat_eval.append((time.perf_counter() - t0) * 1000)
         if args.mode != "bm25":  # так поиск работал бы вживую: dense через HNSW
             t0 = time.perf_counter()
-            live = query(url, key, args.collection, body_for(args.mode, vec, q["sparse"], kmax, exact=False))
+            live = query(url, key, args.collection, body_for(args.mode, vec, q["sparse"], kmax, exact=False), args.group_by)
             lat_live.append((time.perf_counter() - t0) * 1000)
         else:
             live = hits
