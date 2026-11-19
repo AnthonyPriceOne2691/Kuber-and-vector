@@ -35,6 +35,9 @@ kc get nodes -o wide
 kc -n kube-system scale deploy/coredns --replicas=3 >/dev/null
 kc -n kube-system rollout status deploy/coredns --timeout=120s
 
+step "k3s: быстрее признавать выключенную машину мёртвой"
+"$HERE/k3s/failover-tuning.sh"
+
 step "Qdrant"
 "$HERE/qdrant/install.sh" machine-1
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Выкатывает сервис поиска. Сервису достаётся только ключ Qdrant на чтение: его копия
 # переносится из Secret qdrant внутри машины, на диск Мака и в git ключ не попадает.
-# Адрес Qdrant берётся из кластера (ClusterIP сервиса qdrant) и подставляется в манифест.
+# Адреса Qdrant берутся из кластера (ClusterIP сервисов qdrant и qdrant-local) и подставляются в манифест.
 # Правила сети (netpol.yaml) пускают внутрь только вход HAProxy: его адрес берётся с machine-4.
 #   deploy/search/deploy.sh [machine-1] [machine-4]
 set -euo pipefail
@@ -19,7 +19,9 @@ ENTRY=$1
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 IP=$(kubectl -n qdrant get svc qdrant -o jsonpath='{.spec.clusterIP}')
 [ -n "$IP" ] || { echo "нет сервиса qdrant"; exit 1; }
-sed -i "s/QDRANT_CLUSTER_IP/$IP/" /tmp/search.yaml
+LOCAL_IP=$(kubectl -n qdrant get svc qdrant-local -o jsonpath='{.spec.clusterIP}')
+[ -n "$LOCAL_IP" ] || { echo "нет сервиса qdrant-local: повтори deploy/qdrant/install.sh"; exit 1; }
+sed -i "s/QDRANT_LOCAL_CLUSTER_IP/$LOCAL_IP/; s/QDRANT_CLUSTER_IP/$IP/" /tmp/search.yaml
 existed=$(kubectl -n search get deploy search -o name 2>/dev/null || true)
 kubectl apply -f /tmp/search.yaml >/dev/null
 sed -i "s/ENTRY_IP/$ENTRY/" /tmp/search-netpol.yaml

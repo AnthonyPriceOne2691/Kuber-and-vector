@@ -6,9 +6,12 @@
 документации API нет. Внешних зависимостей, кроме FastAPI и uvicorn, нет: к Qdrant и Ollama ходим
 стандартной библиотекой.
 
-Отказ машины: адрес Qdrant это ClusterIP, каждое новое соединение уходит на случайный пир.
-Мёртвый пир молчит, поэтому соединение ждём недолго (QDRANT_CONNECT_TIMEOUT) и повторяем:
-следующая попытка почти всегда попадает на живой пир. Поиск без побочных эффектов, повтор безопасен.
+Отказ машины. Сначала идём в пир Qdrant на своей машине (QDRANT_LOCAL_URL, сервис qdrant-local
+с internalTrafficPolicy: Local): он жив, пока жива машина самого сервиса, а при схеме RF3 у него
+полная копия базы. Если свой пир не ответил, идём в общий ClusterIP, где каждое новое соединение
+уходит на случайный пир. Мёртвый пир молчит, поэтому соединение ждём недолго
+(QDRANT_CONNECT_TIMEOUT) и повторяем: следующая попытка почти всегда попадает на живой пир.
+Поиск без побочных эффектов, повтор безопасен.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ from app import answer as answering
 from app import bm25
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant.qdrant.svc.cluster.local:6333").rstrip("/")
+QDRANT_LOCAL_URL = os.environ.get("QDRANT_LOCAL_URL", "").rstrip("/")  # свой пир; пусто значит не пробовать
 COLLECTION = os.environ.get("COLLECTION", "lbr_v2_naive500_title")  # лучшая ветка замера 18.11
 SEARCH_MODE = os.environ.get("SEARCH_MODE", "dense")  # dense | hybrid (dense + BM25, RRF в Qdrant)
 PREFETCH = int(os.environ.get("PREFETCH", "100"))
@@ -70,11 +74,13 @@ class Unavailable(Exception):
 
 
 def _qdrant(path: str, body: dict | None = None) -> tuple[dict, int]:
-    """Запрос к Qdrant с повтором на другой пир. Возвращает ответ и номер удачной попытки."""
-    u = urllib.parse.urlsplit(QDRANT_URL)
+    """Запрос к Qdrant: свой пир одной попыткой, потом общий адрес с повтором на другой пир.
+    Возвращает ответ и номер удачной попытки (при своём пире попытка 1 значит «ответил свой»)."""
     data = json.dumps(body).encode() if body is not None else None
     headers = {"api-key": _key(), "Content-Type": "application/json"}
-    for attempt in range(1, QDRANT_ATTEMPTS + 1):
+    targets = ([QDRANT_LOCAL_URL] if QDRANT_LOCAL_URL else []) + [QDRANT_URL] * QDRANT_ATTEMPTS
+    for attempt, url in enumerate(targets, 1):
+        u = urllib.parse.urlsplit(url)
         conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=QDRANT_CONNECT_TIMEOUT)
         try:
             conn.connect()  # новое соединение: kube-proxy выбирает пир заново
@@ -126,6 +132,11 @@ def _served_by() -> dict:
     return {"node": NODE, "pod": POD}
 
 
+def _route(attempts: int) -> str:
+    """Кто из Qdrant ответил: свой пир на этой машине или общий сервис."""
+    return "local" if QDRANT_LOCAL_URL and attempts == 1 else "cluster"
+
+
 def _retrieve(q: str, k: int) -> tuple[list[dict], dict, int]:
     """Вопрос -> (куски с адресами, время по шагам в мс, номер удачной попытки к Qdrant)."""
     t0 = time.perf_counter()
@@ -171,6 +182,7 @@ def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
         "query": q, "model": MODEL, "collection": COLLECTION, "mode": SEARCH_MODE,
         "timing_ms": timing,
         "qdrant_attempts": attempts,
+        "qdrant_route": _route(attempts),
         "served_by": _served_by(),
         "results": hits,
     }
@@ -210,5 +222,6 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
         "timing_ms": timing,
         "tokens": tokens,
         "qdrant_attempts": attempts,
+        "qdrant_route": _route(attempts),
         "served_by": _served_by(),
     }

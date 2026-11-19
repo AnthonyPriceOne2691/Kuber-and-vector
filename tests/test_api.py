@@ -36,7 +36,7 @@ class StandTest(unittest.TestCase):
         with open(self.key_file, "w") as f:
             f.write(KEY + "\n")
         self.patch(QDRANT_URL=self.qdrant.url, OLLAMA_URL=self.ollama.url, KEY_FILE=self.key_file,
-                   COLLECTION="contracts_rf2", SEARCH_MODE="dense", NODE="machine-2", POD="search-abc",
+                   COLLECTION="contracts_rf2", SEARCH_MODE="dense", NODE="machine-2", POD="search-abc", QDRANT_LOCAL_URL="",
                    QDRANT_CONNECT_TIMEOUT=0.3, QDRANT_READ_TIMEOUT=0.3, QDRANT_ATTEMPTS=4)
 
     def patch(self, **values) -> None:
@@ -101,6 +101,46 @@ class QdrantRetryTest(StandTest):
         self.assertLess(time.perf_counter() - t0, 1.0)
 
 
+class LocalPeerTest(StandTest):
+    """Свой пир на машине (qdrant-local) первым, общий сервис запасным."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.local = FakeServer(qdrant_handler(self.points))
+        self.addCleanup(self.local.close)
+        self.patch(QDRANT_LOCAL_URL=self.local.url)
+
+    def test_local_first(self):
+        _, attempt = api._qdrant("/collections/contracts_rf2")
+        self.assertEqual((attempt, api._route(attempt)), (1, "local"))
+        self.assertEqual(len(self.local.requests), 1)
+        self.assertEqual(self.qdrant.requests, [])  # общий сервис не трогали
+
+    def test_local_down_falls_back(self):
+        self.patch(QDRANT_LOCAL_URL=closed_port_url())
+        _, attempt = api._qdrant("/collections/contracts_rf2")
+        self.assertEqual((attempt, api._route(attempt)), (2, "cluster"))
+        self.assertEqual(len(self.qdrant.requests), 1)
+
+    def test_local_silent_falls_back_fast(self):
+        self.local.handler = lambda *a: None  # свой пир завис
+        t0 = time.perf_counter()
+        _, attempt = api._qdrant("/collections/contracts_rf2")
+        self.assertEqual(attempt, 2)
+        self.assertLess(time.perf_counter() - t0, 0.9)
+
+    def test_local_auth_error_not_masked(self):
+        self.local.handler = lambda *a: (401, {"status": {"error": "bad key"}})
+        with self.assertRaises(api.QdrantError):
+            api._qdrant("/collections/contracts_rf2")
+        self.assertEqual(self.qdrant.requests, [])  # 4xx не лечится другим пиром
+
+    def test_without_local_route_is_cluster(self):
+        self.patch(QDRANT_LOCAL_URL="")
+        _, attempt = api._qdrant("/collections/contracts_rf2")
+        self.assertEqual((attempt, api._route(attempt)), (1, "cluster"))
+
+
 @unittest.skipIf(TestClient is None, "нет fastapi.testclient (httpx)")
 class EndpointsTest(StandTest):
     def setUp(self) -> None:
@@ -114,6 +154,7 @@ class EndpointsTest(StandTest):
         self.assertEqual(body["mode"], "dense")
         self.assertEqual(body["collection"], "contracts_rf2")
         self.assertEqual(body["qdrant_attempts"], 1)
+        self.assertEqual(body["qdrant_route"], "cluster")
         self.assertEqual(body["served_by"], {"node": "machine-2", "pod": "search-abc"})
         self.assertEqual(set(body["timing_ms"]), {"embed", "search"})
         first = body["results"][0]

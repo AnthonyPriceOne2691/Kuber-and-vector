@@ -60,6 +60,10 @@ spec:
             - {name: http, containerPort: 8080}
           env:
             - {name: QDRANT_URL, value: "http://QDRANT_CLUSTER_IP:6333"}
+            # свой пир на этой машине первым (deploy/qdrant/local-svc.yaml), общий сервис запасным
+            - {name: QDRANT_LOCAL_URL, value: "http://QDRANT_LOCAL_CLUSTER_IP:6333"}
+            # соединение внутри стенда ставится за миллисекунды; молчащий пир отпускаем через 0,1 с
+            - {name: QDRANT_CONNECT_TIMEOUT, value: "0.1"}
             - {name: COLLECTION, value: contracts_rf2}
             - {name: SEARCH_MODE, value: dense}
             - {name: OLLAMA_URL, value: "http://192.168.105.1:11434"}

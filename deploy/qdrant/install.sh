@@ -24,6 +24,7 @@ limactl copy "$KIT/charts/qdrant-1.20.2.tgz" "$VM:/tmp/qdrant-chart.tgz"
 limactl copy "$KIT/bin/helm-v4.3.2-linux-arm64.tar.gz" "$VM:/tmp/helm.tar.gz"
 limactl copy "$HERE/values.yaml" "$VM:/tmp/qdrant-values.yaml"
 limactl copy "$HERE/netpol.yaml" "$VM:/tmp/qdrant-netpol.yaml"
+limactl copy "$HERE/local-svc.yaml" "$VM:/tmp/qdrant-local-svc.yaml"
 
 limactl shell --workdir /tmp "$VM" sudo bash -s <<'EOS'
 set -euo pipefail
@@ -44,7 +45,9 @@ fi
 helm upgrade --install qdrant /tmp/qdrant-chart.tgz -n qdrant -f /tmp/qdrant-values.yaml --wait --timeout 10m >/dev/null
 # сеть: Qdrant принимает только поиск и своих пиров (deploy/qdrant/netpol.yaml)
 kubectl apply -f /tmp/qdrant-netpol.yaml >/dev/null
-rm -rf /tmp/qdrant-chart.tgz /tmp/helm.tar.gz /tmp/linux-arm64 /tmp/qdrant-netpol.yaml
+# свой пир на машине для сервиса поиска (deploy/qdrant/local-svc.yaml)
+kubectl apply -f /tmp/qdrant-local-svc.yaml >/dev/null
+rm -rf /tmp/qdrant-chart.tgz /tmp/helm.tar.gz /tmp/linux-arm64 /tmp/qdrant-netpol.yaml /tmp/qdrant-local-svc.yaml
 kubectl -n qdrant get pods -o wide
 # пиры видят друг друга: число пиров в консенсусе с точки зрения пира 0 (через туннель API,
 # напрямую с узла правило сети уже не пускает)

@@ -1,0 +1,20 @@
+# Пир Qdrant на своей машине. Сервис поиска сначала идёт сюда, и только если свой пир молчит,
+# идёт в общий сервис qdrant (там случайный пир и повтор).
+# Зачем: когда выключены две машины из трёх, у Kubernetes нет кворума, и адреса мёртвых пиров
+# остаются в общем сервисе навсегда. Свой пир живёт на той же машине, что и поиск, а при схеме
+# RF3 у него полная копия базы: поиск отвечает без соседей. В обычной работе это ещё и короче путь.
+# internalTrafficPolicy: Local означает «только поды этой же машины»; если своего пира нет,
+# соединение сразу получает отказ, и поиск идёт в общий сервис.
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-local
+  namespace: qdrant
+spec:
+  type: ClusterIP
+  internalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: qdrant
+    app.kubernetes.io/instance: qdrant
+  ports:
+    - {name: http, port: 6333, targetPort: 6333, protocol: TCP}
