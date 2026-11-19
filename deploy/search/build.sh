@@ -14,11 +14,14 @@ TAG="${2:-stage2}"
 NODES="${NODES:-machine-1 machine-2 machine-3}"
 OUT="$ROOT/runs/images"
 W=/home/ops.guest/build-search
+# Модули сервиса в образе: api.py и всё, что он берёт из app. Список сверяет с импортами
+# tests/test_search_build.py: 19.11 answer.py и metrics.py в образ не попали, поды падали на импорте.
+APP_FILES="__init__.py api.py answer.py bm25.py metrics.py"
 
 limactl shell "$VM" sudo rm -rf "$W"
 limactl shell "$VM" mkdir -p "$W/app"
 limactl copy "$HERE/Containerfile" "$VM:$W/Containerfile"
-for f in __init__.py api.py bm25.py; do limactl copy "$ROOT/app/$f" "$VM:$W/app/$f"; done
+for f in $APP_FILES; do limactl copy "$ROOT/app/$f" "$VM:$W/app/$f"; done
 limactl copy -r "$KIT/wheels" "$VM:$W/wheels"
 limactl copy "$KIT/images/python-3.13-slim-arm64.oci.tar" "$VM:$W/python.oci.tar"
 

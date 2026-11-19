@@ -26,16 +26,18 @@ check "три узла Ready" bash -c "[ \$(limactl shell machine-1 sudo k3s kub
 check "etcd из трёх членов" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl get nodes -l node-role.kubernetes.io/etcd=true --no-headers | wc -l) -eq 3 ]"
 check "три пира Qdrant, по одному на машину" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n qdrant get pods -l app.kubernetes.io/name=qdrant -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
 check "три пода поиска на трёх машинах" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n search get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
+# Пробы допуска решают по тексту ответа: при отказе kubectl выходит с 1, и под pipefail этот код
+# перебил бы найденную grep строку (19.11 две проверки так падали при работающей защите).
 psa_rejects() {  # привилегированный под в search сервер отклоняет ещё до запуска (dry-run)
-  kc -n search run psa-probe --image=localhost/search:stage2 --restart=Never --dry-run=server \
+  { kc -n search run psa-probe --image=localhost/search:stage2 --restart=Never --dry-run=server \
     --overrides='{"apiVersion":"v1","spec":{"containers":[{"name":"psa-probe","image":"localhost/search:stage2","securityContext":{"privileged":true}}]}}' \
-    2>&1 | grep -q "violates PodSecurity"
+    2>&1 || true; } | grep -q "violates PodSecurity"
 }
 check "секреты в etcd зашифрованы" bash -c "limactl shell machine-1 sudo k3s secrets-encrypt status | grep -q 'Encryption Status: Enabled'"
 check "журнал аудита API пишется" limactl shell machine-1 sudo test -s /var/lib/rancher/k3s/server/logs/audit.log
 check "привилегированный под отклоняется (Pod Security restricted)" psa_rejects
 image_probe() {  # $1 образ: под по правилам restricted, чтобы отказать могла только политика образов
-  kc -n search run image-probe --image="$1" --restart=Never --dry-run=server --overrides="{\"apiVersion\":\"v1\",\"spec\":{\"securityContext\":{\"runAsNonRoot\":true,\"runAsUser\":10001,\"seccompProfile\":{\"type\":\"RuntimeDefault\"}},\"containers\":[{\"name\":\"image-probe\",\"image\":\"$1\",\"imagePullPolicy\":\"Never\",\"securityContext\":{\"allowPrivilegeEscalation\":false,\"capabilities\":{\"drop\":[\"ALL\"]}}}]}}" 2>&1
+  kc -n search run image-probe --image="$1" --restart=Never --dry-run=server --overrides="{\"apiVersion\":\"v1\",\"spec\":{\"securityContext\":{\"runAsNonRoot\":true,\"runAsUser\":10001,\"seccompProfile\":{\"type\":\"RuntimeDefault\"}},\"containers\":[{\"name\":\"image-probe\",\"image\":\"$1\",\"imagePullPolicy\":\"Never\",\"securityContext\":{\"allowPrivilegeEscalation\":false,\"capabilities\":{\"drop\":[\"ALL\"]}}}]}}" 2>&1 || true
 }
 foreign_rejected() { image_probe docker.io/library/busybox:1.37 | grep -q "не из комплекта"; }
 own_admitted() { image_probe localhost/search:stage2 | grep -q "server dry run"; }
@@ -134,10 +136,12 @@ as=system:serviceaccount:stand-panel:panel-reader; bad=0
 for a in "list nodes" "list pods -A" "list leases.coordination.k8s.io -n kube-node-lease"; do
   k3s kubectl auth can-i $a --as=$as >/dev/null 2>&1 || { echo "нет права: $a"; bad=1; }
 done
-for a in "list secrets -A" "get secrets -n qdrant" "list configmaps -A" "create pods/exec -n search" \
-    "get pods/exec -n search" "get pods/log -n search" "create pods/portforward -n search" "get nodes/proxy" \
+# Подресурсы только через --subresource: «can-i get pods/exec» спрашивает про под с именем exec.
+for a in "list secrets -A" "get secrets -n qdrant" "list configmaps -A" "create pods --subresource=exec -n search" \
+    "get pods --subresource=exec -n search" "get pods --subresource=log -n search" \
+    "create pods --subresource=portforward -n search" "get nodes --subresource=proxy" \
     "create pods -n search" "delete pods -n search" "patch nodes" "list leases.coordination.k8s.io -n kube-system" \
-    "create serviceaccounts/token -n stand-panel"; do
+    "create serviceaccounts --subresource=token -n stand-panel"; do
   if k3s kubectl auth can-i $a --as=$as >/dev/null 2>&1; then echo "лишнее право: $a"; bad=1; fi
 done
 exit $bad
