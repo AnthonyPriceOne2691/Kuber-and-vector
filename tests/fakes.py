@@ -44,7 +44,7 @@ class FakeServer:
                 self.end_headers()
                 self.wfile.write(data)
 
-            do_GET = do_POST = do_PUT = do_DELETE = _serve
+            do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _serve
 
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
