@@ -218,7 +218,7 @@ class NumbersTest(unittest.TestCase):
             return [(f["prefix"], f["value"], f["unit"]) for f in self.tiles[tid]["facts"]]
         t = self.tiles["one-machine-off"]
         self.assertEqual((t["state"], t["value"]), ("measured", "0"))
-        self.assertEqual(facts("one-machine-off"), [("", "2,656", ""), ("", "1", "")])
+        self.assertEqual(facts("one-machine-off"), [("", "3,462", ""), ("", "1", ""), ("", "22", "s"), ("", "53", "s")])
         self.assertEqual((self.tiles["two-machines-off"]["value"], facts("two-machines-off")), ("0", [("", "1,586", "")]))
         self.assertEqual((self.tiles["writes-during-failure"]["value"], facts("writes-during-failure")),
                          ("0", [("", "1,489", "")]))
@@ -228,9 +228,10 @@ class NumbersTest(unittest.TestCase):
         self.assertEqual((self.tiles["port-scan"]["value"], facts("port-scan")), ("1", [("", "262,140", ""), ("", "443", "")]))
         self.assertEqual((self.tiles["image-scan"]["value"], facts("image-scan")), ("0", [("", "7", "")]))
         q = self.view["quality"]
-        self.assertEqual([(r["id"], r["value"], r["bar"]) for r in q["rows"]], [("ours", "82.6", "82.6%"), ("paper", "63.5", "63.5%")])
+        self.assertEqual([(r["id"], r["value"], r["bar"]) for r in q["rows"]],
+                         [("plain", "51.8", "51.8%"), ("ours", "82.6", "82.6%"), ("paper", "63.5", "63.5%")])
         self.assertEqual((q["metric"], q["state"]), ("recall@64", "measured"))
-        self.assertIn("document title", q["caveat"])
+        self.assertIn("31 points", q["caveat"])
         self.assertEqual(self.tiles["quality"]["state"], "measured")
 
     def test_measured_on_the_stand(self):

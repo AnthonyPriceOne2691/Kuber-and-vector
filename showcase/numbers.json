@@ -14,8 +14,13 @@
     "unit": "%",
     "rows": [
       {
+        "id": "plain",
+        "label": "Plain chunks, same model",
+        "value": 51.8
+      },
+      {
         "id": "ours",
-        "label": "Our chunks with document title",
+        "label": "Our method, document title and section in every chunk",
         "value": 82.6
       },
       {
@@ -24,7 +29,7 @@
         "value": 63.5
       }
     ],
-    "caveat": "Our chunks carry the document title. The paper's baseline does not."
+    "caveat": "Same 776 questions and the same bge-m3 model, only the chunking differs. The method adds 31 points."
   },
   "tiles": [
     {
@@ -41,11 +46,21 @@
       "facts": [
         {
           "label": "requests",
-          "value": 2656
+          "value": 3462
         },
         {
           "label": "retried",
           "value": 1
+        },
+        {
+          "label": "cluster marked the machine dead after",
+          "value": 22,
+          "unit": "s"
+        },
+        {
+          "label": "search moved to live machines after",
+          "value": 53,
+          "unit": "s"
         }
       ]
     },
@@ -72,6 +87,33 @@
         {
           "label": "acknowledged",
           "value": 1489
+        }
+      ]
+    },
+    {
+      "id": "model-switch",
+      "title": "Embedding model switch",
+      "value": 0,
+      "unit": "errors seen by users",
+      "tone": "good",
+      "facts": [
+        {
+          "label": "all pods on the new model in",
+          "value": 0.8,
+          "unit": "s"
+        },
+        {
+          "label": "rollback in",
+          "value": 0.8,
+          "unit": "s"
+        },
+        {
+          "label": "requests under load",
+          "value": 1353
+        },
+        {
+          "label": "pods that refused the mislabeled vectors",
+          "value": 3
         }
       ]
     },
