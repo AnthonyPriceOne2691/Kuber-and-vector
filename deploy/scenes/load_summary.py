@@ -20,11 +20,11 @@ def summary(snap: dict) -> str:
     bad_seconds = sum(1 for p in series if p.get("errors_with_retry"))
     retry_seconds = sum(1 for p in series if p.get("retries"))
     return "\n".join([
-        f"запросов {t['count']}, пропущено по потолку {t.get('skipped', 0)}",
-        f"ошибок у пользователя {wr['errors']} ({100 * wr['rate']:.2f} %), без повтора было бы {wo['errors']} "
-        f"({100 * wo['rate']:.2f} %), повторов {t['retries']}",
-        f"за последние {len(series)} с: худший p95 {p95} мс, худший p99 {p99} мс, секунд с ошибками {bad_seconds}, "
-        f"секунд с повторами {retry_seconds}",
+        f"requests {t['count']}, skipped by the rate cap {t.get('skipped', 0)}",
+        f"errors seen by users {wr['errors']} ({100 * wr['rate']:.2f} %), without retry it would be {wo['errors']} "
+        f"({100 * wo['rate']:.2f} %), retries {t['retries']}",
+        f"last {len(series)} s: worst p95 {p95} ms, worst p99 {p99} ms, seconds with errors {bad_seconds}, "
+        f"seconds with retries {retry_seconds}",
     ])
 
 

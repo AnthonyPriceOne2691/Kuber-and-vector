@@ -20,7 +20,7 @@ SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
 
 def _read(path: str) -> bytes:
     if os.path.getsize(path) > MAX_BYTES:
-        raise ValueError(f"{path}: больше {MAX_BYTES} байт")
+        raise ValueError(f"{path}: larger than {MAX_BYTES} bytes")
     with open(path, "rb") as f:
         return f.read()
 
@@ -29,7 +29,7 @@ def parse_nmap(data: bytes) -> dict[str, dict]:
     """адрес -> {"open": {порт}, "closed": {порт}, "closed_more": число, "silent": число}.
     closed значит, что машина ответила отказом; silent это filtered и open|filtered (ответа не было)."""
     if b"<!ENTITY" in data:
-        raise ValueError("в отчёте nmap объявления ENTITY, не разбираю")
+        raise ValueError("nmap report declares ENTITY, refusing to parse it")
     root = ET.fromstring(data)
     hosts: dict[str, dict] = {}
     for host in root.iter("host"):
@@ -68,8 +68,8 @@ def _machines(run: str) -> list[tuple[str, str]]:
 def _fmt_ports(ports: set[int], more: int = 0) -> str:
     parts = [", ".join(str(p) for p in sorted(ports))] if ports else []
     if more:
-        parts.append(f"ещё {more}")
-    return "; ".join(parts) if parts else "нет"
+        parts.append(f"+{more} more")
+    return "; ".join(parts) if parts else "none"
 
 
 def _knock(run: str) -> list[tuple[str, str]]:
@@ -90,15 +90,15 @@ def ports_report(run: str) -> tuple[str, bool]:
     udp_path = os.path.join(run, "nmap-udp.xml")
     udp = parse_nmap(_read(udp_path)) if os.path.exists(udp_path) else {}
     ok = True
-    lines = ["## Скан портов снаружи", "",
-             "С машины «снаружи» в сети машин: все порты TCP и выбранные UDP (nmap -sS -p-, -sU).",
-             "Молчание (пакет отброшен) nmap пишет как filtered или open|filtered; closed значит, что машина ответила отказом.",
-             "", "| Машина | Адрес | Открыто TCP | Отказ TCP (closed) | Молчат TCP | Открыто UDP |", "|---|---|---|---|---|---|"]
+    lines = ["## Port scan from outside", "",
+             "From the outside machine on the machine network: every TCP port and selected UDP ports (nmap -sS -p-, -sU).",
+             "Silence (packet dropped) shows in nmap as filtered or open|filtered; closed means the machine answered with a refusal.",
+             "", "| Machine | Address | Open TCP | Refused TCP (closed) | Silent TCP | Open UDP |", "|---|---|---|---|---|---|"]
     for name, ip in _machines(run):
         h = tcp.get(ip)
         if h is None:  # машины нет в отчёте: скан не дошёл, это не «всё закрыто»
             ok = False
-            lines.append(f"| {name} | {ip} | нет в отчёте | | | |")
+            lines.append(f"| {name} | {ip} | missing from the report | | | |")
             continue
         u = udp.get(ip, {"open": set()})
         if h["open"] != EXPECTED_OPEN.get(name, set()) or h["closed"] or h["closed_more"] or u["open"]:
@@ -107,20 +107,20 @@ def ports_report(run: str) -> tuple[str, bool]:
                      f"| {h['silent']} | {_fmt_ports(u['open'])} |")
     knock = _knock(run)
     if knock:
-        lines += ["", "| Стук руками | Ответ |", "|---|---|"]
-        brute = [code for what, code in knock if what.startswith("перебор ключей")]
+        lines += ["", "| Manual knock | Answer |", "|---|---|"]
+        brute = [code for what, code in knock if what.startswith("key guessing")]
         for what, code in knock:
-            if not what.startswith("перебор ключей"):
-                lines.append(f"| {what} | {'соединения нет' if code == '000' else code} |")
+            if not what.startswith("key guessing"):
+                lines.append(f"| {what} | {'no connection' if code == '000' else code} |")
         if brute:
             first429 = next((i for i, c in enumerate(brute, 1) if c == "429"), None)
-            tail = f", с попытки {first429} ответ 429" if first429 else ", 429 не было"
-            lines.append(f"| перебор ключей, {len(brute)} попыток | {brute.count('401')} раз 401{tail} |")
+            tail = f", 429 from attempt {first429}" if first429 else ", no 429"
+            lines.append(f"| key guessing, {len(brute)} attempts | 401 {brute.count('401')} times{tail} |")
             ok = ok and first429 is not None
-        direct = [code for what, code in knock if "напрямую" in what]
+        direct = [code for what, code in knock if what.endswith(" direct")]
         ok = ok and all(code == "000" for code in direct)
-        ok = ok and all(code == "401" for what, code in knock if "без ключа" in what)
-    lines += ["", f"Итог: {'как ждали, снаружи открыт только 443 на входе' if ok else 'НЕ как ждали, смотри таблицы'}."]
+        ok = ok and all(code == "401" for what, code in knock if "without a key" in what)
+    lines += ["", f"Result: {'as expected, from outside only 443 on the entry is open' if ok else 'NOT as expected, see the tables'}."]
     return "\n".join(lines) + "\n", ok
 
 
@@ -142,13 +142,13 @@ def bench_report(run: str) -> tuple[str, bool]:
     report = json.loads(_read(os.path.join(run, "kube-bench.json")))
     results = _bench_results(report)
     counts = {s: sum(r.get("status") == s for r in results) for s in ("PASS", "FAIL", "WARN", "INFO")}
-    lines = ["## Kubernetes по CIS (kube-bench)", "",
-             f"Проверок {len(results)}: PASS {counts['PASS']}, FAIL {counts['FAIL']}, WARN {counts['WARN']}, INFO {counts['INFO']}.",
-             "Профиль писался под Kubernetes 1.27–1.29; FAIL и WARN разбираются руками по самооценке k3s, прежде чем писать их в итог."]
+    lines = ["## Kubernetes against CIS (kube-bench)", "",
+             f"Checks {len(results)}: PASS {counts['PASS']}, FAIL {counts['FAIL']}, WARN {counts['WARN']}, INFO {counts['INFO']}.",
+             "The profile targets Kubernetes 1.27 to 1.29; FAIL and WARN are reviewed by hand against the k3s self-assessment before they count."]
     for status in ("FAIL", "WARN"):
         rows = [r for r in results if r.get("status") == status]
         if rows:
-            lines += ["", f"| {status} | Проверка |", "|---|---|"]
+            lines += ["", f"| {status} | Check |", "|---|---|"]
             lines += [f"| {r.get('test_number')} | {str(r.get('test_desc', '')).replace('|', '/')} |" for r in rows]
     return "\n".join(lines) + "\n", bool(results)
 
@@ -164,15 +164,15 @@ def images_report(run: str) -> tuple[str, bool]:
     db_path = os.path.join(run, "trivy-db.json")
     if os.path.exists(db_path):
         db = json.loads(_read(db_path)).get("UpdatedAt", "")[:10]
-    lines = ["## Уязвимости образов (trivy)", "",
-             f"База уязвимостей из комплекта, обновлена {db or 'дата неизвестна'}; сканер без сети.", "",
-             "| Образ | " + " | ".join(SEVERITIES) + " | Критичных и высоких с исправлением |",
+    lines = ["## Image vulnerabilities (trivy)", "",
+             f"Vulnerability database from the kit, updated {db or 'on an unknown date'}; the scanner runs offline.", "",
+             "| Image | " + " | ".join(SEVERITIES) + " | Critical and high with a fix |",
              "|---|" + "---|" * (len(SEVERITIES) + 1)]
     ok = bool(names)
     for file, img in names.items():
         path = os.path.join(run, "trivy", f"{file}.json")
         if not os.path.exists(path):
-            lines.append(f"| {img} | " + " | ".join("?" for _ in SEVERITIES) + " | нет отчёта |")
+            lines.append(f"| {img} | " + " | ".join("?" for _ in SEVERITIES) + " | no report |")
             ok = False
             continue
         report = json.loads(_read(path))

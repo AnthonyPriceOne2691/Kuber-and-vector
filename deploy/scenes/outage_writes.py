@@ -119,13 +119,13 @@ def main() -> None:
         with open(args.out, "w") as f:
             json.dump(result, f)
         s = summarize(result["writes"], {r["id"] for r in result["writes"] if r["ok"]}, -1)
-        print(f"записей {s['sent']}, подтверждено {s['acked']}, ошибок {s['failed']}"
-              + (f" с {s['failed_window_s'][0]} по {s['failed_window_s'][1]} с ({', '.join(s['errors'])})" if s["failed"] else "")
-              + f", самая долгая запись {s['max_ms']} мс")
+        print(f"writes {s['sent']}, acknowledged {s['acked']}, failed {s['failed']}"
+              + (f" from {s['failed_window_s'][0]} to {s['failed_window_s'][1]} s ({', '.join(s['errors'])})" if s["failed"] else "")
+              + f", slowest write {s['max_ms']} ms")
     else:
         s = verify(args, key)
-        print(f"подтверждённых записей {s['acked']}, из них не нашлось {len(s['acked_missing'])}; "
-              f"точек в коллекции {s['points_in_collection']}")
+        print(f"acknowledged writes {s['acked']}, missing {len(s['acked_missing'])}; "
+              f"points in collection {s['points_in_collection']}")
         print(json.dumps(s, ensure_ascii=False))
 
 

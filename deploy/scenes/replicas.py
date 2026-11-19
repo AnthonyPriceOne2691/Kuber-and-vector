@@ -43,19 +43,19 @@ def snapshot(pods: list[list[str]], key: str, collection: str) -> tuple[dict, di
 
 
 def problems(held: dict, reachable: dict, rf: int | None) -> list[str]:
-    out = [f"пир на {n} не отвечает" for n, ok in sorted(reachable.items()) if not ok]
+    out = [f"peer on {n} not answering" for n, ok in sorted(reachable.items()) if not ok]
     if rf is None:
-        return out + ["ни один пир не ответил"]
+        return out + ["no peer answered"]
     for sid in sorted(held):
         copies = held[sid]
         bad = {n: st for n, (st, _) in copies.items() if st != "Active"}
         if bad:
-            out.append(f"шард {sid}: " + ", ".join(f"{n} {st}" for n, st in sorted(bad.items())))
+            out.append(f"shard {sid}: " + ", ".join(f"{n} {st}" for n, st in sorted(bad.items())))
         if len(copies) < rf:
-            out.append(f"шард {sid}: копий {len(copies)} из {rf}")
+            out.append(f"shard {sid}: {len(copies)} of {rf} replicas")
         counts = {c for _, c in copies.values()}
         if len(counts) > 1:
-            out.append(f"шард {sid}: у копий разное число точек " +
+            out.append(f"shard {sid}: replicas differ in point count " +
                        ", ".join(f"{n} {c}" for n, (_, c) in sorted(copies.items())))
     return out
 
@@ -79,9 +79,9 @@ def main() -> None:
         time.sleep(2)
     waited = time.monotonic() - t0
     for c, issues in report.items():
-        print(f"{c}: " + ("все копии Active и совпадают" if not issues else "; ".join(issues)))
+        print(f"{c}: " + ("all replicas Active and in sync" if not issues else "; ".join(issues)))
     if args.wait:
-        print(f"ждали {waited:.0f} с")
+        print(f"waited {waited:.0f} s")
     sys.exit(1 if any(report.values()) else 0)
 
 

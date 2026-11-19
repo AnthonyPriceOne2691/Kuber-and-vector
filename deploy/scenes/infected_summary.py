@@ -11,7 +11,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-EXPECTED_PASS = ("прочитать базу ключом пода",)  # ключ на чтение живёт в поде: читать можно, вынести некуда
+EXPECTED_PASS = ("read the database with the pod key",)  # ключ на чтение живёт в поде: читать можно, вынести некуда
 
 
 def parse_attack(text: str) -> tuple[float, str, list[tuple[float, str, str, bool]]]:
@@ -22,10 +22,10 @@ def parse_attack(text: str) -> tuple[float, str, list[tuple[float, str, str, boo
         if len(parts) != 4:
             continue
         ts, what, result, verdict = parts
-        if what == "начало":
+        if what == "start":
             start, pod = float(ts), result
-        elif what != "конец":
-            rows.append((float(ts), what, result, verdict == "отбито"))
+        elif what != "end":
+            rows.append((float(ts), what, result, verdict == "blocked"))
     return start, pod, rows
 
 
@@ -67,22 +67,22 @@ def report(run: str) -> tuple[str, bool]:
     alerts = [a for a in alerts if a[0] >= start - 1]  # старые тревоги до атаки не считаем
     must = [r for r in rows if r[1] not in EXPECTED_PASS]
     blocked = sum(r[3] for r in must)
-    lines = [f"## Заражённый под {pod or '?'}: попытки изнутри", "", "| Попытка | Итог | |", "|---|---|---|"]
-    lines += [f"| {what} | {result} | {'отбито' if b else 'прошло'} |" for _, what, result, b in rows]
-    lines += ["", f"Отбито {blocked} из {len(must)}."]
+    lines = [f"## Infected pod {pod or '?'}: attempts from inside", "", "| Attempt | Result | |", "|---|---|---|"]
+    lines += [f"| {what} | {result} | {'blocked' if b else 'passed'} |" for _, what, result, b in rows]
+    lines += ["", f"Blocked {blocked} of {len(must)}."]
     passed = [r[1] for r in rows if r[1] in EXPECTED_PASS and not r[3]]
     if passed:
-        lines.append("Прошло чтение базы: ключ на чтение лежит в поде, его уносят вместе с оболочкой. Вынести прочитанное некуда, все выходы выше закрыты.")
+        lines.append("Reading the database went through: the read-only key lives in the pod and leaves with the shell. There is nowhere to send what was read, every exit above is closed.")
     if alerts:
         first = (alerts[0][0] - start) * 1000
         by_rule: dict[str, int] = {}
         for _, rule, _ in alerts:
             by_rule[rule] = by_rule.get(rule, 0) + 1
-        lines += ["", f"Тревог Falco {len(alerts)}, первая через {first:.0f} мс после начала атаки.", "",
-                  "| Правило | Тревог |", "|---|---|"]
+        lines += ["", f"Falco alerts {len(alerts)}, the first {first:.0f} ms after the attack started.", "",
+                  "| Rule | Alerts |", "|---|---|"]
         lines += [f"| {rule} | {n} |" for rule, n in sorted(by_rule.items(), key=lambda x: -x[1])]
     else:
-        lines += ["", "Тревог Falco нет."]
+        lines += ["", "No Falco alerts."]
     ok = bool(must) and blocked == len(must) and bool(alerts)
     return "\n".join(lines) + "\n", ok
 

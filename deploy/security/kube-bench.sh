@@ -17,7 +17,7 @@ VM="${1:-machine-1}"
 BENCHMARK="${BENCHMARK:-k3s-cis-1.9}"
 TGZ="$ROOT/kit/vm-security/bin/kube-bench_0.16.0_linux_arm64.tar.gz"
 OUT="$ROOT/runs/security/$(date +%Y%m%d-%H%M%S)"
-[ -f "$TGZ" ] || { echo "нет комплекта: deploy/vm/kit-build.sh security"; exit 1; }
+[ -f "$TGZ" ] || { echo "kit missing: deploy/vm/kit-build.sh security"; exit 1; }
 mkdir -p "$OUT"
 
 limactl copy "$TGZ" "$VM:/tmp/kube-bench.tar.gz"
@@ -38,5 +38,5 @@ limactl shell "$VM" sudo rm -f /tmp/kube-bench.json
 status=0
 "$PY" -I -B "$HERE/summary.py" bench "$OUT" > "$OUT/summary.md" || status=$?
 cat "$OUT/summary.md"
-echo "файлы: $OUT"
+echo "files: $OUT"
 exit "$status"

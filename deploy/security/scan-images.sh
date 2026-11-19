@@ -18,10 +18,10 @@ mkdir -p "$OUT/images" "$OUT/trivy"
 
 # образы работающих подов, по одному архиву на образ
 images=$(limactl shell "$VM" sudo k3s kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' | sort -u)
-[ -n "$images" ] || { echo "подов нет"; exit 1; }
+[ -n "$images" ] || { echo "no pods"; exit 1; }
 : > "$OUT/images.txt"
 for img in $images; do
-  case "$img" in *[!A-Za-z0-9._/:@-]*) echo "странное имя образа: $img"; exit 1 ;; esac
+  case "$img" in *[!A-Za-z0-9._/:@-]*) echo "unexpected image name: $img"; exit 1 ;; esac
   file="$(echo "$img" | tr '/:@' '___').tar"
   # Имя без реестра (rancher/...) containerd хранит с docker.io/
   ref="$img"; case "$ref" in */*/*|localhost/*) ;; */*) ref="docker.io/$ref" ;; *) ref="docker.io/library/$ref" ;; esac
@@ -44,12 +44,12 @@ while IFS="$(printf '\t')" read -r file img; do
     --cache-dir /home/ops.guest/trivy-cache --scanners vuln --format json --quiet --output "/tmp/scan/$file.json" </dev/null
   limactl copy "$OUTSIDE:/tmp/scan/$file.json" "$OUT/trivy/$file.json" </dev/null
   limactl shell "$OUTSIDE" rm -f "/tmp/scan/$file" </dev/null
-  echo "$img: просканирован"
+  echo "$img: scanned"
 done < "$OUT/images.txt"
 limactl shell "$OUTSIDE" cat /home/ops.guest/trivy-cache/db/metadata.json > "$OUT/trivy-db.json"
 
 status=0
 "$PY" -I -B "$HERE/summary.py" images "$OUT" > "$OUT/summary.md" || status=$?
 cat "$OUT/summary.md"
-echo "файлы: $OUT"
+echo "files: $OUT"
 exit "$status"

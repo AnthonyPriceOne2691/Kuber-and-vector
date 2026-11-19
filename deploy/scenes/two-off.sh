@@ -14,7 +14,7 @@ OFF="${OFF:-60}"; RATE="${RATE:-10}"; WARM="${WARM:-20}"; TAIL="${TAIL:-20}"
 OUT="$ROOT/runs/two-off-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 t0=$(date +%s)
-mark() { echo "  +$(( $(date +%s) - t0 )) с  $*" | tee -a "$OUT/timeline.txt"; }
+mark() { echo "  +$(( $(date +%s) - t0 )) s  $*" | tee -a "$OUT/timeline.txt"; }
 kc() { limactl shell machine-1 sudo k3s kubectl "$@"; }
 use() {  # $1 коллекция для сервиса поиска
   kc -n search set env deploy/search "COLLECTION=$1" >/dev/null
@@ -22,21 +22,21 @@ use() {  # $1 коллекция для сервиса поиска
 }
 
 use contracts_rf3
-mark "поиск переключён на contracts_rf3"
+mark "search switched to contracts_rf3 (full copy on every machine)"
 "$HERE/load.sh" start "$RATE"
-mark "нагрузка пошла"
+mark "load started"
 sleep "$WARM"
 
 for m in $VMS; do limactl stop --force "$m" >> "$ROOT/runs/scene-vm.log" 2>&1 & done
 wait
-mark "выключены: $VMS; у Kubernetes нет кворума"
+mark "powered off: $VMS; Kubernetes has lost quorum"
 sleep "$OFF"
 
-mark "возвращаем: $VMS"
+mark "bringing back: $VMS"
 # shellcheck disable=SC2086
 "$HERE/return.sh" $VMS | tee -a "$OUT/timeline.txt"
 sleep "$TAIL"
 "$HERE/load.sh" stop "$OUT/load.json" | tee "$OUT/summary.txt"
 use contracts_rf2
-mark "поиск вернулся на contracts_rf2"
-echo "итоги в $OUT"
+mark "search back on contracts_rf2"
+echo "results in $OUT"

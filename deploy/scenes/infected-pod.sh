@@ -20,7 +20,7 @@ RATE="${RATE:-20}"; WARM="${WARM:-15}"; HOLD="${HOLD:-10}"; TAIL="${TAIL:-15}"
 OUT="$ROOT/runs/infected-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 t0=$(date +%s)
-mark() { echo "  +$(( $(date +%s) - t0 )) с  $*" | tee -a "$OUT/timeline.txt"; }
+mark() { echo "  +$(( $(date +%s) - t0 )) s  $*" | tee -a "$OUT/timeline.txt"; }
 kc() { limactl shell machine-1 sudo k3s kubectl "$@"; }
 ip_of() { limactl shell "$1" bash -c "ip -4 -o addr show lima0 | awk '{print \$4}' | cut -d/ -f1"; }
 running_search() {
@@ -30,37 +30,37 @@ running_search() {
 
 POD=$(kc -n search get pods -l app=search --field-selector "spec.nodeName=$VM,status.phase=Running" -o jsonpath='{.items[0].metadata.name}')
 FALCO=$(kc -n falco get pods -l app.kubernetes.io/name=falco --field-selector "spec.nodeName=$VM" -o jsonpath='{.items[0].metadata.name}')
-[ -n "$POD" ] && [ -n "$FALCO" ] || { echo "на $VM нет пода поиска или Falco"; exit 1; }
+[ -n "$POD" ] && [ -n "$FALCO" ] || { echo "no search or Falco pod on $VM"; exit 1; }
 neighbors=""
 for m in machine-1 machine-2 machine-3; do [ "$m" = "$VM" ] || neighbors="$neighbors $(ip_of "$m")"; done
-echo "под $POD на $VM, Falco $FALCO, соседи:$neighbors"
+echo "pod $POD on $VM, Falco $FALCO, neighbors:$neighbors"
 
 "$HERE/load.sh" start "$RATE"
-mark "нагрузка пошла"
+mark "load started"
 sleep "$WARM"
 
-mark "атакующий в поде $POD"
+mark "attacker has a shell in pod $POD"
 # Оболочка читает ключ пода (Falco: CRITICAL) и запускает Python с попытками, код идёт по stdin
 # shellcheck disable=SC2086,SC2016  # соседи это список адресов; $(cat …) раскрывает оболочка пода
 kc -n search exec -i "$POD" -- sh -c 'KEY=$(cat /run/secrets/qdrant/read-only-api-key); export KEY; exec python3 -I - "$@"' \
   sh $neighbors < "$HERE/attack_pod.py" > "$OUT/attack.tsv"
-awk -F'\t' '$2 != "начало" && $2 != "конец" {print "    " $4 ": " $2 " (" $3 ")"}' "$OUT/attack.tsv"
-mark "попытки закончились"
+awk -F'\t' '$2 != "start" && $2 != "end" {print "    " $4 ": " $2 " (" $3 ")"}' "$OUT/attack.tsv"
+mark "attempts finished"
 sleep 3
 kc -n falco logs "$FALCO" --since=5m > "$OUT/falco.jsonl" 2>/dev/null || true
 
 kc -n search label pod "$POD" app=quarantine --overwrite >/dev/null
-mark "под $POD в карантине: снят с сервиса, сеть отрезана default-deny"
+mark "pod $POD quarantined: out of the service, network cut by default-deny"
 for _ in $(seq 1 90); do [ "$(running_search)" -ge 3 ] && break; sleep 1; done
-mark "чистый под поднят, поиск снова в трёх копиях ($(running_search) готовы)"
+mark "clean pod up, search back to three replicas ($(running_search) ready)"
 sleep "$HOLD"
 kc -n search delete pod "$POD" --wait=false >/dev/null
-mark "заражённый под удалён"
+mark "infected pod deleted"
 sleep "$TAIL"
 "$HERE/load.sh" stop "$OUT/load.json" | tee "$OUT/load.txt"
 
 status=0
 "$PY" -I -B "$HERE/infected_summary.py" "$OUT" > "$OUT/summary.md" || status=$?
 cat "$OUT/summary.md"
-echo "итоги в $OUT"
+echo "results in $OUT"
 exit "$status"

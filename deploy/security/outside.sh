@@ -19,7 +19,7 @@ exists() { limactl list -q 2>/dev/null | grep -qx "$VM"; }
 
 case "${1:-up}" in
   up)
-    [ -d "$KIT/debs" ] || { echo "нет комплекта: deploy/vm/kit-build.sh security"; exit 1; }
+    [ -d "$KIT/debs" ] || { echo "kit missing: deploy/vm/kit-build.sh security"; exit 1; }
     if ! exists; then
       limactl create --tty=false --name "$VM" \
         --set '.param.ROLE = "outside" | .cpus = 1 | .memory = "2GiB"' "$ROOT/deploy/vm/machine.yaml"
@@ -33,7 +33,7 @@ case "${1:-up}" in
         -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts=/tmp/apt-no-sources /tmp/kit-debs/*.deb >/dev/null
         rm -rf /tmp/kit-debs'
     fi
-    echo "$VM: $(limactl shell "$VM" bash -c 'nmap --version | head -1'), роль песочницы $(limactl shell "$VM" cat /run/sandbox-role)"
+    echo "$VM: $(limactl shell "$VM" bash -c 'nmap --version | head -1'), sandbox role $(limactl shell "$VM" cat /run/sandbox-role)"
     ;;
   trivy)
     exists || "$0" up
@@ -46,10 +46,10 @@ case "${1:-up}" in
       limactl shell "$VM" mkdir -p /home/ops.guest/trivy-cache
       limactl copy -r "$KIT/trivy-cache/db" "$VM:/home/ops.guest/trivy-cache/db"
     fi
-    echo "$VM: $(limactl shell "$VM" trivy --version 2>/dev/null | head -1), база $(limactl shell "$VM" cat /home/ops.guest/trivy-cache/db/metadata.json)"
+    echo "$VM: $(limactl shell "$VM" trivy --version 2>/dev/null | head -1), database $(limactl shell "$VM" cat /home/ops.guest/trivy-cache/db/metadata.json)"
     ;;
   down)
-    if exists; then limactl delete --force "$VM" >/dev/null; echo "$VM удалена"; else echo "$VM нет"; fi
+    if exists; then limactl delete --force "$VM" >/dev/null; echo "$VM deleted"; else echo "no $VM"; fi
     ;;
-  *) echo "режим: up, trivy или down"; exit 1 ;;
+  *) echo "mode: up, trivy or down"; exit 1 ;;
 esac

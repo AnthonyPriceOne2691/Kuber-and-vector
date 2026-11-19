@@ -48,19 +48,19 @@ class AttackTest(unittest.TestCase):
 
         out = io.StringIO()
         with mock.patch.dict(os.environ, {"KEY": KEY, "QDRANT_URL": q.url}), \
-                mock.patch.object(attack, "tcp", return_value=("нет соединения (TimeoutError, 3.0 с)", True)), \
-                mock.patch.object(attack, "dns", return_value=("нет ответа за 4 с", True)), \
+                mock.patch.object(attack, "tcp", return_value=("no connection (TimeoutError, 3.0 s)", True)), \
+                mock.patch.object(attack, "dns", return_value=("no answer within 4 s", True)), \
                 mock.patch.object(attack, "http", side_effect=http), \
                 contextlib.redirect_stdout(out):
             self.assertEqual(attack.main(["-", "192.168.105.5"]), 0)
         rows = [line.split("\t") for line in out.getvalue().splitlines()]
         verdict = {r[1]: (r[2], r[3]) for r in rows}
-        self.assertEqual(verdict["стереть базу ключом пода (DELETE contracts_rf2)"], ("HTTP 403", "отбито"))
-        self.assertEqual(verdict["записать в базу ключом пода (PUT points)"], ("HTTP 403", "отбито"))
-        self.assertEqual(verdict["прочитать базу ключом пода"], ("HTTP 200", "прошло"))
-        self.assertEqual(verdict["Мак: Ollama мимо фильтра (/api/tags)"], ("HTTP 403", "отбито"))
-        self.assertEqual(verdict["соседняя машина 192.168.105.5: etcd 2379"][1], "отбито")
-        self.assertEqual((rows[0][1], rows[-1][1]), ("начало", "конец"))
+        self.assertEqual(verdict["wipe the database with the pod key (DELETE contracts_rf2)"], ("HTTP 403", "blocked"))
+        self.assertEqual(verdict["write to the database with the pod key (PUT points)"], ("HTTP 403", "blocked"))
+        self.assertEqual(verdict["read the database with the pod key"], ("HTTP 200", "passed"))
+        self.assertEqual(verdict["host Mac: Ollama past the filter (/api/tags)"], ("HTTP 403", "blocked"))
+        self.assertEqual(verdict["neighbor 192.168.105.5: etcd 2379"][1], "blocked")
+        self.assertEqual((rows[0][1], rows[-1][1]), ("start", "end"))
         self.assertEqual([r[0] for r in q.requests], ["DELETE", "PUT", "GET"])
 
     def test_tcp_refused_is_blocked(self):
@@ -71,11 +71,11 @@ class AttackTest(unittest.TestCase):
 
 
 def attack_tsv(start: float, all_blocked: bool = True) -> str:
-    rows = [f"{start:.3f}\tначало\tsearch-abc\t-",
-            f"{start + 3:.3f}\tвынести данные в интернет (1.1.1.1:443)\tнет соединения\t{'отбито' if all_blocked else 'прошло'}",
-            f"{start + 3.1:.3f}\tстереть базу ключом пода (DELETE contracts_rf2)\tHTTP 403\tотбито",
-            f"{start + 3.2:.3f}\tпрочитать базу ключом пода\tHTTP 200\tпрошло",
-            f"{start + 3.3:.3f}\tконец\t-\t-"]
+    rows = [f"{start:.3f}\tstart\tsearch-abc\t-",
+            f"{start + 3:.3f}\texfiltrate to the internet (1.1.1.1:443)\tno connection\t{'blocked' if all_blocked else 'passed'}",
+            f"{start + 3.1:.3f}\twipe the database with the pod key (DELETE contracts_rf2)\tHTTP 403\tblocked",
+            f"{start + 3.2:.3f}\tread the database with the pod key\tHTTP 200\tpassed",
+            f"{start + 3.3:.3f}\tend\t-\t-"]
     return "\n".join(rows) + "\n"
 
 
@@ -107,10 +107,10 @@ class SummaryTest(unittest.TestCase):
         ])
         text, ok = infected.report(self.run_dir(attack_tsv(start), falco))
         self.assertTrue(ok, text)
-        self.assertIn("Отбито 2 из 2.", text)
-        self.assertIn("Тревог Falco 4, первая через 50 мс после начала атаки.", text)
+        self.assertIn("Blocked 2 of 2.", text)
+        self.assertIn("Falco alerts 4, the first 50 ms after the attack started.", text)
         self.assertIn("| Stand forbidden connection from search pod | 2 |", text)
-        self.assertIn("Прошло чтение базы", text)
+        self.assertIn("Reading the database went through", text)
 
     def test_leak_or_silence_fails(self):
         start = infected.falco_time("2026-11-19T10:00:00Z")
@@ -118,7 +118,7 @@ class SummaryTest(unittest.TestCase):
         self.assertFalse(infected.report(self.run_dir(attack_tsv(start, all_blocked=False), alert))[1])
         text, ok = infected.report(self.run_dir(attack_tsv(start), None))
         self.assertFalse(ok)
-        self.assertIn("Тревог Falco нет.", text)
+        self.assertIn("No Falco alerts.", text)
 
 
 if __name__ == "__main__":

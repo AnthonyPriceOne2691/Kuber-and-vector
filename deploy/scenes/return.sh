@@ -12,26 +12,26 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 COLLS="${COLLS:-contracts_rf2 contracts_rf3}"
 WAIT="${WAIT:-300}"
 t0=$(date +%s)
-mark() { echo "  +$(( $(date +%s) - t0 )) с  $*"; }
+mark() { echo "  +$(( $(date +%s) - t0 )) s  $*"; }
 kc() { limactl shell machine-1 sudo k3s kubectl "$@"; }
 mkdir -p "$ROOT/runs"
 
 "$ROOT/deploy/vm/up.sh" "$@" >> "$ROOT/runs/scene-vm.log" 2>&1
-mark "машины включены: $*"
+mark "machines started: $*"
 
 for m in "$@"; do
   for _ in $(seq 1 150); do
     s=$(kc get node "$m" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
     [ "$s" = True ] && break; sleep 2
   done
-  [ "$s" = True ] || { echo "узел $m не стал Ready"; exit 1; }
-  mark "узел $m Ready"
+  [ "$s" = True ] || { echo "node $m did not become Ready"; exit 1; }
+  mark "node $m Ready"
   for _ in $(seq 1 150); do
     r=$(kc -n qdrant get pods -l app.kubernetes.io/name=qdrant --field-selector "spec.nodeName=$m" -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null || true)
     [ "$r" = true ] && break; sleep 2
   done
-  [ "$r" = true ] || { echo "пир Qdrant на $m не готов"; exit 1; }
-  mark "пир Qdrant на $m готов"
+  [ "$r" = true ] || { echo "Qdrant peer on $m not ready"; exit 1; }
+  mark "Qdrant peer on $m ready"
 done
 
 limactl copy "$HERE/replicas.py" machine-1:/tmp/replicas.py
@@ -52,9 +52,9 @@ done
 # shellcheck disable=SC2086
 python3 -I -B /tmp/replicas.py "$K/ro" "$K/pods" $COLLS --wait "$WAIT"
 EOS
-mark "копии шардов на месте"
+mark "shard replicas in place"
 
 kc -n search rollout restart deploy/search >/dev/null
 kc -n search rollout status deploy/search --timeout=180s >/dev/null
-mark "поиск снова разложен по машинам"
+mark "search spread across machines again"
 kc -n search get pods -o wide

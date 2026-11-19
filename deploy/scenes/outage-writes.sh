@@ -12,7 +12,7 @@ VM="${1:-machine-2}"
 DURATION="${DURATION:-150}"; OFF_AT="${OFF_AT:-20}"; OFF="${OFF:-60}"
 REMOTE=/home/ops.guest/outage
 t0=$(date +%s)
-mark() { echo "  +$(( $(date +%s) - t0 )) с  $*"; }
+mark() { echo "  +$(( $(date +%s) - t0 )) s  $*"; }
 
 limactl shell machine-1 sudo rm -rf "$REMOTE"
 limactl shell machine-1 mkdir -p "$REMOTE"
@@ -38,20 +38,20 @@ RUN
 chmod 700 run.sh
 setsid nohup ./run.sh "$2" > run.log 2>&1 < /dev/null &
 EOS
-mark "записи пошли ($DURATION с)"
+mark "writes started ($DURATION s)"
 
 sleep "$OFF_AT"
 limactl stop --force "$VM" >> "$ROOT/runs/scene-vm.log" 2>&1
-mark "$VM выключена"
+mark "$VM powered off"
 sleep "$OFF"
-mark "возвращаем $VM"
+mark "bringing $VM back"
 "$ROOT/deploy/vm/up.sh" "$VM" >> "$ROOT/runs/scene-vm.log" 2>&1
-mark "$VM включена, записи ещё идут"
+mark "$VM started, writes still running"
 
 for _ in $(seq 1 $(( DURATION + 60 ))); do
   limactl shell machine-1 sudo test -f "$REMOTE/done" && break; sleep 1
 done
-mark "записи закончились"
+mark "writes finished"
 limactl shell machine-1 sudo cat "$REMOTE/write.log"
 # копии сверяем, когда записи уже не идут: иначе числа точек у копий честно расходятся на лету
 COLLS="outage_rf2 contracts_rf2 contracts_rf3" "$HERE/return.sh" "$VM"
@@ -71,4 +71,4 @@ curl -s -o /dev/null -X DELETE -H @<(printf 'api-key: %s\n' "$(cat "$K/rw")") ht
 EOS
 limactl copy "machine-1:$REMOTE/writes.json" "$ROOT/runs/outage-writes-$(date +%Y%m%d-%H%M%S).json" || true
 limactl shell machine-1 sudo rm -rf "$REMOTE"
-mark "готово"
+mark "done"

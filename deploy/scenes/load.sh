@@ -19,7 +19,7 @@ case "${1:-}" in
     RATE="${2:-20}"
     ENTRY="$(limactl shell "$VM" bash -c "ip -4 -o addr show lima0 | awk '{print \$4}' | cut -d/ -f1")"
     [ -f "$ROOT/runs/stand-ca.pem" ] && [ -f "$ROOT/runs/entry-api-key" ] \
-      || { echo "нет runs/stand-ca.pem или runs/entry-api-key: сначала deploy/observer/install.sh"; exit 1; }
+      || { echo "missing runs/stand-ca.pem or runs/entry-api-key: run deploy/observer/install.sh first"; exit 1; }
     limactl shell "$VM" bash -c "pkill -f '[l]oadgen.py' || true; rm -rf $DIR; mkdir -p $DIR"
     # папка снимка: пишет пользователь машины (генератор), читают все (панель); /run пустеет при
     # перезагрузке, поэтому создаётся здесь, на каждом старте; старый снимок убирается
@@ -33,10 +33,10 @@ case "${1:-}" in
       --cafile ca.pem --api-key-file key --rate $RATE --timeout 2 --retry other --questions questions.txt \
       --stats-file $STATS --quiet > $DIR/loadgen.log 2>&1 < /dev/null &"
     for _ in $(seq 1 20); do limactl shell "$VM" test -s "$STATS" && break; sleep 1; done
-    limactl shell "$VM" test -s "$STATS" || { echo "генератор не стартовал:"; limactl shell "$VM" cat "$DIR/loadgen.log"; exit 1; }
-    echo "нагрузка: $RATE запросов в секунду на https://$ENTRY/search (снимок для панели: $STATS)" ;;
+    limactl shell "$VM" test -s "$STATS" || { echo "load generator did not start:"; limactl shell "$VM" cat "$DIR/loadgen.log"; exit 1; }
+    echo "load: $RATE requests per second to https://$ENTRY/search (snapshot for the panel: $STATS)" ;;
   stop)
-    FILE="${2:?куда сохранить снимок}"
+    FILE="${2:?where to save the snapshot}"
     limactl shell "$VM" bash -c "pkill -TERM -f '[l]oadgen.py' || true"
     sleep 2
     limactl copy "$VM:$STATS" "$FILE"

@@ -65,16 +65,16 @@ class ReplicasTest(unittest.TestCase):
                           "machine-2": [(0, "Partial", 4), (2, "Active", 5)],
                           "machine-3": [(1, "Active", 6), (2, "Active", 5)]})
         issues = replicas.problems(*replicas.snapshot(pods, KEY, "c"))
-        self.assertIn("шард 0: machine-2 Partial", issues)
-        self.assertTrue(any(i.startswith("шард 1: у копий разное число точек") for i in issues))
-        self.assertTrue(any(i.startswith("шард 0: у копий разное число точек") for i in issues))
+        self.assertIn("shard 0: machine-2 Partial", issues)
+        self.assertTrue(any(i.startswith("shard 1: replicas differ in point count") for i in issues))
+        self.assertTrue(any(i.startswith("shard 0: replicas differ in point count") for i in issues))
 
     def test_dead_peer(self):
         pods = self.pods({"machine-1": [(0, "Active", 10)], "machine-3": [(1, "Active", 7)]})
         pods.append(["qdrant-1", "machine-2", "1"])  # туннель в никуда
         issues = replicas.problems(*replicas.snapshot(pods, KEY, "c"))
-        self.assertIn("пир на machine-2 не отвечает", issues)
-        self.assertIn("шард 0: копий 1 из 2", issues)
+        self.assertIn("peer on machine-2 not answering", issues)
+        self.assertIn("shard 0: 1 of 2 replicas", issues)
 
     def test_cli_exit_code(self):
         pods = self.pods({"machine-1": [(0, "Active", 1)], "machine-2": [(0, "Active", 1)]})
@@ -88,7 +88,7 @@ class ReplicasTest(unittest.TestCase):
                 with self.assertRaises(SystemExit) as ctx:
                     replicas.main()
             self.assertEqual(ctx.exception.code, 0)
-            self.assertIn("все копии Active и совпадают", out.call_args_list[0].args[0])
+            self.assertIn("all replicas Active and in sync", out.call_args_list[0].args[0])
 
 
 class OutageWritesTest(unittest.TestCase):
@@ -153,8 +153,8 @@ class LoadSummaryTest(unittest.TestCase):
                            {"p95": 540, "p99": 900, "errors_with_retry": 0, "retries": 12},
                            {"p95": None, "p99": None, "errors_with_retry": 0, "retries": 0}]}
         text = load_summary.summary(snap)
-        self.assertIn("ошибок у пользователя 0 (0.00 %), без повтора было бы 29 (1.21 %), повторов 31", text)
-        self.assertIn("худший p95 540 мс, худший p99 900 мс, секунд с ошибками 0, секунд с повторами 1", text)
+        self.assertIn("errors seen by users 0 (0.00 %), without retry it would be 29 (1.21 %), retries 31", text)
+        self.assertIn("worst p95 540 ms, worst p99 900 ms, seconds with errors 0, seconds with retries 1", text)
 
 
 if __name__ == "__main__":

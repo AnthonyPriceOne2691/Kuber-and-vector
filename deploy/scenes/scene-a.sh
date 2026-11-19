@@ -13,32 +13,32 @@ OFF="${OFF:-60}"; RATE="${RATE:-20}"; WARM="${WARM:-20}"; TAIL="${TAIL:-20}"
 OUT="$ROOT/runs/scene-a-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
 t0=$(date +%s)
-mark() { echo "  +$(( $(date +%s) - t0 )) с  $*" | tee -a "$OUT/timeline.txt"; }
+mark() { echo "  +$(( $(date +%s) - t0 )) s  $*" | tee -a "$OUT/timeline.txt"; }
 kc() { limactl shell machine-1 sudo k3s kubectl "$@"; }
 
 "$HERE/load.sh" start "$RATE"
-mark "нагрузка пошла"
+mark "load started"
 sleep "$WARM"
 
 limactl stop --force "$VM" >> "$ROOT/runs/scene-vm.log" 2>&1
 t_off=$(date +%s)
-mark "$VM выключена"
+mark "$VM powered off"
 dead=""; moved=""
 while [ $(( $(date +%s) - t_off )) -lt "$OFF" ]; do
   if [ -z "$dead" ]; then
     s=$(kc get node "$VM" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
-    if [ -n "$s" ] && [ "$s" != True ]; then dead=1; mark "кластер признал $VM мёртвой (Ready=$s)"; fi
+    if [ -n "$s" ] && [ "$s" != True ]; then dead=1; mark "cluster marked $VM down (Ready=$s)"; fi
   elif [ -z "$moved" ]; then
     n=$(kc -n search get pods --field-selector status.phase=Running \
           -o jsonpath='{range .items[*]}{.spec.nodeName}{"\n"}{end}' 2>/dev/null | grep -vc "^$VM\$" || true)
-    if [ "${n:-0}" -ge 3 ]; then moved=1; mark "поиск снова в трёх копиях, без $VM"; fi
+    if [ "${n:-0}" -ge 3 ]; then moved=1; mark "search back to three replicas, without $VM"; fi
   fi
   sleep 1
 done
 
-mark "возвращаем $VM"
+mark "bringing $VM back"
 "$HERE/return.sh" "$VM" | tee -a "$OUT/timeline.txt"
-mark "$VM вернулась, поиск разложен"
+mark "$VM is back, search spread across machines again"
 sleep "$TAIL"
 "$HERE/load.sh" stop "$OUT/load.json" | tee "$OUT/summary.txt"
-echo "итоги в $OUT"
+echo "results in $OUT"

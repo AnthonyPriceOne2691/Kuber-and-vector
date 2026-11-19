@@ -48,9 +48,9 @@ def good_ports(run: Run, entry_ports: dict[int, str] | None = None, knock_extra:
     hosts.append(host(MACHINES["machine-4"], entry_ports if entry_ports is not None else {443: "open"}, ("filtered", 65534)))
     run.write("nmap-tcp.xml", nmap(*hosts))
     run.write("nmap-udp.xml", nmap(*(host(ip, {51820: "open|filtered"}, ("filtered", 7)) for ip in MACHINES.values())))
-    brute = "".join(f"перебор ключей, попытка {i}\t{'401' if i <= 10 else '429'}\n" for i in range(1, 16))
-    run.write("knock.txt", "Qdrant machine-1:6333 напрямую\t000\nAPI k3s machine-1:6443 напрямую\t000\n"
-                           "поиск через вход без ключа\t401\n" + brute + knock_extra)
+    brute = "".join(f"key guessing, attempt {i}\t{'401' if i <= 10 else '429'}\n" for i in range(1, 16))
+    run.write("knock.txt", "Qdrant machine-1:6333 direct\t000\nk3s API machine-1:6443 direct\t000\n"
+                           "search through the entry without a key\t401\n" + brute + knock_extra)
 
 
 class PortsTest(unittest.TestCase):
@@ -59,10 +59,10 @@ class PortsTest(unittest.TestCase):
         good_ports(run)
         text, ok = summary.ports_report(run.dir)
         self.assertTrue(ok, text)
-        self.assertIn("| machine-4 | 192.168.105.2 | 443 | нет | 65534 | нет |", text)
-        self.assertIn("| machine-1 | 192.168.105.5 | нет | нет | 65535 | нет |", text)
-        self.assertIn("| перебор ключей, 15 попыток | 10 раз 401, с попытки 11 ответ 429 |", text)
-        self.assertIn("| Qdrant machine-1:6333 напрямую | соединения нет |", text)
+        self.assertIn("| machine-4 | 192.168.105.2 | 443 | none | 65534 | none |", text)
+        self.assertIn("| machine-1 | 192.168.105.5 | none | none | 65535 | none |", text)
+        self.assertIn("| key guessing, 15 attempts | 401 10 times, 429 from attempt 11 |", text)
+        self.assertIn("| Qdrant machine-1:6333 direct | no connection |", text)
 
     def test_extra_open_port_or_rst_fails(self):
         run = Run(self)
@@ -76,7 +76,7 @@ class PortsTest(unittest.TestCase):
                                           for n, ip in MACHINES.items() if n != "machine-1")))
         text, ok = summary.ports_report(run2.dir)
         self.assertFalse(ok)
-        self.assertIn("ещё 65535", text)
+        self.assertIn("+65535 more", text)
 
     def test_missing_host_and_answered_knock_fail(self):
         run = Run(self)
@@ -84,9 +84,9 @@ class PortsTest(unittest.TestCase):
         run.write("nmap-tcp.xml", nmap(host(MACHINES["machine-4"], {443: "open"})))
         text, ok = summary.ports_report(run.dir)
         self.assertFalse(ok)
-        self.assertIn("нет в отчёте", text)
+        self.assertIn("missing from the report", text)
         run2 = Run(self)
-        good_ports(run2, knock_extra="kubelet machine-1:10250 напрямую\t401\n")
+        good_ports(run2, knock_extra="kubelet machine-1:10250 direct\t401\n")
         self.assertFalse(summary.ports_report(run2.dir)[1], "kubelet ответил снаружи")
 
     def test_entities_rejected(self):
@@ -104,7 +104,7 @@ class BenchImagesTest(unittest.TestCase):
                                                  "Totals": {"total_pass": 1, "total_fail": 1}}))
         text, ok = summary.bench_report(run.dir)
         self.assertTrue(ok)
-        self.assertIn("Проверок 3: PASS 1, FAIL 1, WARN 1, INFO 0.", text)
+        self.assertIn("Checks 3: PASS 1, FAIL 1, WARN 1, INFO 0.", text)
         self.assertIn("| 1.2.6 | Ensure that the --kubelet-certificate-authority / argument |", text)
 
     def test_images_dedup_and_fixable(self):
@@ -119,8 +119,8 @@ class BenchImagesTest(unittest.TestCase):
         text, ok = summary.images_report(run.dir)
         self.assertFalse(ok, "у второго образа нет отчёта")
         self.assertIn("| localhost/search:stage2 | 1 | 1 | 0 | 1 | 0 | 1 |", text)
-        self.assertIn("| docker.io/qdrant/qdrant:v1.20.2 | ? | ? | ? | ? | ? | нет отчёта |", text)
-        self.assertIn("обновлена 2026-11-18", text)
+        self.assertIn("| docker.io/qdrant/qdrant:v1.20.2 | ? | ? | ? | ? | ? | no report |", text)
+        self.assertIn("updated 2026-11-18", text)
 
     def test_cli_usage(self):
         err = io.StringIO()
