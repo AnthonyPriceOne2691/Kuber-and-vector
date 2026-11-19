@@ -1,0 +1,41 @@
+# Проверки на каждый push и pull request. Без секретов и без прав на запись: токен только читает код.
+# Сторонний код здесь один: официальный actions/checkout, закреплён по коммиту (тег можно
+# перевесить, коммит нет). Зависимости Python те же версии FastAPI и httpx, что в образе поиска.
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Зависимости сервиса поиска
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q --disable-pip-version-check fastapi==0.164.0 httpx==0.28.1
+          /tmp/venv/bin/python -c "import sys, fastapi, httpx; print(sys.version.split()[0], 'fastapi', fastapi.__version__, 'httpx', httpx.__version__)"
+
+      - name: Тесты сервиса, фильтра Ollama, данных, оценки и сцен
+        run: /tmp/venv/bin/python -I -B -W error::ResourceWarning -m unittest discover -s tests -t . -v
+
+      - name: Тесты панели и генератора нагрузки
+        run: /tmp/venv/bin/python -I -B -m unittest discover -s panel/tests -t panel
+
+      - name: Скрипты shell разбираются
+        run: |
+          git ls-files '*.sh' | while read -r f; do bash -n "$f" || { echo "синтаксис: $f"; exit 1; }; done
+          if command -v shellcheck >/dev/null; then
+            shellcheck --version | head -2
+            git ls-files -z '*.sh' | xargs -0 shellcheck --severity=error
+          fi
