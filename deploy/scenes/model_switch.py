@@ -23,6 +23,7 @@ import json
 import os
 import random
 import ssl
+import subprocess
 import sys
 import time
 import urllib.error
@@ -120,6 +121,9 @@ def cmd_pair(e: Entry, args) -> int:
         print(f"no answer through the entry ({errors} errors)")
         write(args.out, {"ok": False, "errors": errors})
         return 1
+    states = pod_states(args.pods_cmd)
+    if states:  # по подам точнее, чем по пробам через вход
+        seen = states
     pairs = Counter(pair_of(d) for d in seen.values())
     one = next(iter(seen.values()))
     c = check_of(one)
@@ -130,6 +134,32 @@ def cmd_pair(e: Entry, args) -> int:
                      "model": d.get("model"), "model_check": check_of(d)} for p, d in seen.items()},
                      "errors": errors})
     return 0
+
+
+def pod_states(cmd: str | None, timeout: float = 15.0) -> dict[str, dict] | None:
+    """Состояние пода поиска на каждой машине: команда --pods-cmd печатает строку «machine-N {/readyz}»
+    на машину (deploy/scenes/pod_states.sh: NodePort 30080 с machine-4, externalTrafficPolicy Local,
+    машина отвечает своим подом). Через вход этого не увидеть: при leastconn под нагрузкой одиночные
+    пробы сцены уходят на самый свободный под, и третий под мог не попасться за 90 с (прогон 19.11).
+    None, если команды нет или она не сработала; тело /readyz без JSON пропускается."""
+    if not cmd:
+        return None
+    try:
+        out = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    states: dict[str, dict] = {}
+    for line in out.splitlines():
+        name, _, body = line.strip().partition(" ")
+        if not name or not body.startswith("{"):
+            continue
+        try:
+            doc = json.loads(body)
+        except ValueError:
+            continue
+        if isinstance(doc, dict):
+            states[name] = doc
+    return states
 
 
 def matches(doc: dict, collection: str, model: str | None, status: str | None) -> bool:
@@ -156,6 +186,9 @@ def cmd_wait(e: Entry, args) -> int:
             first_ok[pod] = time.monotonic() - t0
         if not ok:
             first_ok.pop(pod, None)  # под ещё на старой паре: ждём заново
+        states = pod_states(args.pods_cmd)
+        if states is not None:  # по подам: каждый под машины кластера отвечает новой парой
+            last = states
         good = [p for p, d in last.items() if matches(d, args.collection, args.model, args.status)]
         if len(good) >= args.pods and len(good) == len(last):
             done_at = time.monotonic() - t0
@@ -202,6 +235,11 @@ def cmd_hold(e: Entry, args) -> int:
             refused[pod_of(doc)] = c
             if first_refusal is None:
                 first_refusal = time.monotonic() - t0
+    states = pod_states(args.pods_cmd)
+    if states is not None:  # отказ видно у каждого пода, а не только у тех, кому достались пробы
+        refused = {n: check_of(d) for n, d in states.items()
+                   if d.get("collection") == args.collection and check_of(d).get("status") == "refused"
+                   and check_of(d).get("target") == args.refused}
     answers = sum(pairs.values())
     from_old, from_target = collections[args.collection], collections[args.refused]
     some = next(iter(refused.values()), {})
@@ -349,13 +387,16 @@ def cmd_summary(args) -> int:
     return 0 if ok else 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def parser() -> argparse.ArgumentParser:
+    """Разбор аргументов отдельно: tests/test_scene_model_switch.py прогоняет через него каждый вызов
+    из model-switch.sh (19.11 сцена передавала общий --rate после подкоманды и падала)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", help="вход стенда, https://ENTRY")
     ap.add_argument("--cafile")
     ap.add_argument("--api-key-file")
     ap.add_argument("--rate", type=float, default=10.0, help="запросов в секунду, не больше")
     ap.add_argument("--request-timeout", type=float, default=5.0, help="таймаут запроса, с")
+    ap.add_argument("--pods-cmd", help="команда: строка «machine-N {/readyz}» на машину (pod_states.sh)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("pair")
     p.add_argument("--requests", type=int, default=9)
@@ -386,6 +427,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--out")
     s = sub.add_parser("summary")
     s.add_argument("dir")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = parser()
     args = ap.parse_args(argv)
     if args.cmd == "compare":
         return cmd_compare(args)

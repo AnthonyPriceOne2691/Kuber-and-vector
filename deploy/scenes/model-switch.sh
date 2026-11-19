@@ -30,9 +30,11 @@ mark() { echo "  +$(( $(date +%s) - t0 )) s  $*" | tee -a "$OUT/timeline.txt"; }
 step() { "$@" 2>&1 | sed 's/^/          /' | tee -a "$OUT/timeline.txt"; }  # вывод проверки под отметкой
 ip_of() { limactl shell "$1" bash -c "ip -4 -o addr show lima0 | awk '{print \$4}' | cut -d/ -f1"; }
 reg() { "$ROOT/deploy/qdrant/registry.sh" "$@"; }
+# Поды проверяются и по их /readyz с machine-4 (pod_states.sh): через вход при leastconn под нагрузкой
+# одиночные пробы уходят на самый свободный под, и 19.11 третий под за 90 с не попался ни разу.
 ms() {
   "$PY" -I -B "$HERE/model_switch.py" --url "https://$ENTRY" --cafile "$ROOT/runs/stand-ca.pem" \
-    --api-key-file "$ROOT/runs/entry-api-key" "$@"
+    --api-key-file "$ROOT/runs/entry-api-key" --pods-cmd "$(printf %q "$HERE/pod_states.sh")" "$@"
 }
 registered() {  # $1 коллекция есть в реестре (по снимку registry.sh show --json)
   "$PY" -I -c 'import json, sys
@@ -44,6 +46,9 @@ sys.exit(0 if sys.argv[2] in json.loads(lines[-1])["registry"] else 1)' "$OUT/re
   || { echo "missing runs/stand-ca.pem or runs/entry-api-key: run deploy/observer/install.sh first"; exit 1; }
 [ -d "$ROOT/data/legalbenchrag/benchmarks" ] || { echo "missing data/legalbenchrag: quality needs the benchmark answers"; exit 1; }
 ENTRY="$(ip_of machine-4)"
+NODE_IPS=""
+for m in machine-1 machine-2 machine-3; do NODE_IPS="$NODE_IPS $m=$(ip_of "$m")"; done
+export NODE_IPS  # pod_states.sh: адреса один раз, а не на каждой пробе
 
 LOAD=""; PLANTED=""; DONE=""
 finish() {  # сцена прервана: алиас обратно на BASE, ловушку убрать, нагрузку остановить
@@ -88,14 +93,14 @@ sleep "$WARM"
 mark "who answers users now"
 step ms pair --out "$OUT/pair-before.json"
 mark "quality before the switch"
-step ms quality --k "$K" --per-dataset "$PER_DATASET" --rate 20 --expect "$BASE" --label "before: " \
+step ms --rate 20 quality --k "$K" --per-dataset "$PER_DATASET" --expect "$BASE" --label "before: " \
   --out "$OUT/quality-before.json" || result=1
 
 mark "switching alias $ALIAS to $NEW: one request to Qdrant, no pod restarts"
 step reg alias "$ALIAS" "$NEW"
 step ms wait --collection "$NEW" --pods 3 --out "$OUT/wait-switch.json"
 mark "quality after the switch"
-step ms quality --k "$K" --per-dataset "$PER_DATASET" --rate 20 --expect "$NEW" --label "after:  " \
+step ms --rate 20 quality --k "$K" --per-dataset "$PER_DATASET" --expect "$NEW" --label "after:  " \
   --out "$OUT/quality-after.json" || result=1
 step ms compare "$OUT/quality-before.json" "$OUT/quality-after.json" --out "$OUT/quality-compare.json" || result=1
 

@@ -35,6 +35,7 @@ class Pods:
                       for p in ("search-a", "search-b", "search-c")}
         self.results = lambda q, k: []
         self.fail_every = 0
+        self.sticky = None  # под, на который вход шлёт все пробы (leastconn под нагрузкой, стенд 19.11)
 
     def handler(self, method, path, headers, body):
         if headers.get("X-API-Key") != API_KEY:
@@ -44,7 +45,7 @@ class Pods:
         with self.lock:
             self.n += 1
             n = self.n
-            pod = sorted(self.state)[n % 3]
+            pod = self.sticky or sorted(self.state)[n % 3]
             coll, model, check = self.state[pod]
         if self.fail_every and n % self.fail_every == 0:
             return 503, {"error": "busy"}
@@ -119,6 +120,63 @@ class SceneToolTest(unittest.TestCase):
             self.pods.state[pod] = ("contracts_rf2", "bge-m3", {
                 "status": "refused", "alias": "contracts", "target": "contracts_mislabeled", "target_model": "bge-m3",
                 "reason": "fingerprint mismatch: cosine 0.031 < 0.99", "verified": True, "cosine": 1.0})
+
+    def write_states(self, collection: str, model: str, check: dict) -> str:
+        """Файл, который печатает --pods-cmd: строка «machine-N {/readyz}» на машину."""
+        path = self.out("states.txt")
+        with open(path, "w") as f:
+            for m in ("machine-1", "machine-2", "machine-3"):
+                f.write(m + " " + json.dumps({"ready": True, "collection": collection, "model": model,
+                                              "model_check": check}) + "\n")
+            f.write("machine-x not json\n")
+        return "cat " + path
+
+    def test_wait_by_pod_states_when_entry_sticks_to_one_pod(self):
+        # 19.11: под нагрузкой все пробы через вход шли на один-два пода, ожидание «все три» не кончалось
+        for p in self.pods.state:
+            self.pods.state[p] = ("contracts_rf2_arctic", "snowflake-arctic-embed2", {"status": "verified"})
+        self.pods.sticky = "search-a"
+        cmd = self.write_states("contracts_rf2_arctic", "snowflake-arctic-embed2", {"status": "verified"})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ms.main(["--url", self.srv.url, "--api-key-file", self.key, "--rate", "500", "--pods-cmd", cmd,
+                            "wait", "--collection", "contracts_rf2_arctic", "--pods", "3", "--timeout", "5",
+                            "--out", self.out("wait.json")])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("all 3 pods answer contracts_rf2_arctic", out.getvalue())
+        self.assertEqual(sorted(self.read("wait.json")["pods"]), ["machine-1", "machine-2", "machine-3"])
+
+    def test_hold_by_pod_states_when_entry_sticks_to_one_pod(self):
+        self.refuse_all()
+        self.pods.sticky = "search-a"
+        check = {"status": "refused", "target": "contracts_mislabeled", "target_model": "bge-m3",
+                 "reason": "fingerprint mismatch: cosine 0.031 < 0.99"}
+        cmd = self.write_states("contracts_rf2", "bge-m3", check)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ms.main(["--url", self.srv.url, "--api-key-file", self.key, "--rate", "500", "--pods-cmd", cmd,
+                            "hold", "--seconds", "0.3", "--collection", "contracts_rf2",
+                            "--refused", "contracts_mislabeled", "--out", self.out("hold.json")])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("3 pods refused contracts_mislabeled", out.getvalue())
+
+    def test_scene_invocations_parse(self):
+        # каждый вызов ms … из model-switch.sh принимает разбор аргументов (19.11: --rate после подкоманды)
+        import re
+        import shlex
+        with open(os.path.join(ROOT, "deploy", "scenes", "model-switch.sh"), encoding="utf-8") as f:
+            text = f.read().replace("\\\n", " ")
+        calls = [m.group(1) for m in re.finditer(r"(?:^|\s)ms ((?:--|pair|wait|hold|quality|compare)[^|\n]*)", text, re.M)]
+        self.assertGreaterEqual(len(calls), 8, calls)
+        for call in calls:
+            args = [re.sub(r"\$\{?\w+\}?", "x", a) for a in shlex.split(call.split(" || ")[0])]
+            args = ["8" if a == "x" and i and args[i - 1] in ("--k", "--per-dataset", "--rate", "--seconds", "--pods")
+                    else a for i, a in enumerate(args)]
+            with contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    ms.parser().parse_args(["--url", "https://x", *args])
+                except SystemExit:
+                    self.fail(f"model_switch.py не принимает вызов из model-switch.sh: ms {call}")
 
     def test_hold_trap_refused(self):
         self.refuse_all()
