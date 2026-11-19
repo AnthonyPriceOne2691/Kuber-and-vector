@@ -5,7 +5,7 @@
 («Document: … / Section: …», eval/prepare.py index_text), и по этому тексту считается вектор. В точке
 ребёнка адрес родителя (file, start, end) и поле parent: поиск группирует детей по родителю и отдаёт
 родителя, поэтому единица выдачи та же, что у базы, и recall@k сравним с ней один к одному.
-Приём из журнала RAG владельца (шаг 15: мелкие куски с заголовком для поиска, родитель для ответа).
+Известный приём parent-document retrieval (small-to-big): мелкие куски с заголовком для поиска, родитель в выдаче.
 
     python3 -I -B eval/children.py --parents cache/stage1/naive500_title --out cache/stage1_children/children200
 Только стандартная библиотека; векторы bge-m3 через Ollama на Маке с кэшем по тексту (app/embedding.py).
@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # наш код; с -I папка скрипта сама в путь не попадает
 
+from app import bm25  # noqa: E402
 from app.embedding import OllamaEmbedder  # noqa: E402
 from eval.prepare import index_text  # noqa: E402
 
@@ -44,6 +45,17 @@ def children_of(parent: dict, size: int, step: int) -> list[dict]:
     return out
 
 
+def points_for(parents: list[dict], size: int, step: int, with_parents: bool = False) -> list[dict]:
+    """Точки коллекции: дети всех родителей. С with_parents сами родители тоже точки (parent = свой id),
+    и родителя поднимает лучшее из него целиком и его детей (поиск на двух размерах сразу)."""
+    kids = [c for p in parents for c in children_of(p, size, step)]
+    if not with_parents:
+        return kids
+    own = [dict({k: v for k, v in p.items() if k != "sparse"}, parent=p["id"], child_start=p["start"])
+           for p in parents]
+    return own + kids
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("--parents", default=str(ROOT / "cache/stage1/naive500_title"))
@@ -53,26 +65,35 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", default="bge-m3")
     ap.add_argument("--ollama", default="http://127.0.0.1:11434")
     ap.add_argument("--embed-cache", default=str(ROOT / "cache/embeddings"))
+    ap.add_argument("--no-sparse", action="store_true", help="без BM25 (по умолчанию он есть, для гибрида)")
+    ap.add_argument("--with-parents", action="store_true", help="родители тоже точки, рядом с детьми")
     args = ap.parse_args(argv)
 
     with open(Path(args.parents) / "points.jsonl", encoding="utf-8") as f:
         parents = [json.loads(line) for line in f]
-    kids = [c for p in parents for c in children_of(p, args.size, args.step)]
+    kids = points_for(parents, args.size, args.step, args.with_parents)
     texts = [index_text(c, "title") for c in kids]
-    print(f"родителей {len(parents)}, детей {len(kids)} (по {args.size} знаков, шаг {args.step})")
+    print(f"родителей {len(parents)}, точек {len(kids)} (дети по {args.size} знаков, шаг {args.step}"
+          + (", и сами родители)" if args.with_parents else ")"))
 
     emb = OllamaEmbedder(model=args.model, url=args.ollama, cache_dir=args.embed_cache)
     t0 = time.perf_counter()
     emb.ensure(texts)
     print(f"векторы: новых {emb.computed} за {time.perf_counter() - t0:.0f} с")
+    # BM25 по тому же тексту, что у вектора, длина документа средняя по детям (как eval/prepare.py)
+    avgdl = 0.0 if args.no_sparse else sum(len(bm25.tokens(t)) for t in texts) / max(len(texts), 1)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "points.jsonl", "w", encoding="utf-8") as fp, open(out / "vectors.f32", "wb") as fv:
         for c, t in zip(kids, texts):
+            if not args.no_sparse:
+                c = dict(c, sparse=bm25.doc_sparse(t, avgdl))
             fp.write(json.dumps(c, ensure_ascii=False) + "\n")
             emb.vector(t).tofile(fv)
     (out / "meta.json").write_text(json.dumps({"model": args.model, "size": args.size, "step": args.step,
-                                               "parents": len(parents), "children": len(kids)}, indent=2))
+                                               "parents": len(parents), "points": len(kids),
+                                               "with_parents": args.with_parents,
+                                               "sparse": not args.no_sparse}, indent=2))
     print(f"готово: {out}")
     return 0
 

@@ -5,7 +5,8 @@
   dense   вектор bge-m3; качество на точном поиске (воспроизводимо), отдельно доля
           совпадения приближённого HNSW с точным и задержки обоих
   bm25    разреженный BM25 (IDF считает Qdrant)
-  hybrid  dense и bm25 по 100 кандидатов, слияние RRF внутри Qdrant (Query API)
+  hybrid  dense и bm25 по 100 кандидатов (--prefetch), слияние RRF внутри Qdrant (Query API)
+С --group-by parent ищет по детям и отдаёт родителя (поиск «от малого к большому», eval/children.py).
 Векторы вопросов посчитаны заранее на Маке. На вопрос один поиск top-64, precision и recall
 при k = 1…64 по первым k результатам, как у авторов. Результат по каждому вопросу сохраняется
 для доверительных интервалов.
@@ -46,13 +47,13 @@ def query(url: str, key: str, collection: str, body: dict, group_by: str | None 
     return res["points"]
 
 
-def body_for(mode: str, vec: list[float], sparse: dict, limit: int, exact: bool) -> dict:
+def body_for(mode: str, vec: list[float], sparse: dict, limit: int, exact: bool, prefetch: int = PREFETCH) -> dict:
     if mode == "dense":
         return {"query": vec, "using": "dense", "limit": limit, "with_payload": PAYLOAD, "params": {"exact": exact}}
     if mode == "bm25":
         return {"query": sparse, "using": "bm25", "limit": limit, "with_payload": PAYLOAD}
-    return {"prefetch": [{"query": vec, "using": "dense", "limit": PREFETCH, "params": {"exact": exact}},
-                         {"query": sparse, "using": "bm25", "limit": PREFETCH}],
+    return {"prefetch": [{"query": vec, "using": "dense", "limit": prefetch, "params": {"exact": exact}},
+                         {"query": sparse, "using": "bm25", "limit": prefetch}],
             "query": {"fusion": "rrf"}, "limit": limit, "with_payload": PAYLOAD}
 
 
@@ -71,6 +72,8 @@ def main() -> None:
     ap.add_argument("--dim", type=int, default=1024)
     ap.add_argument("--out", required=True)
     ap.add_argument("--group-by", help="поле группы, например parent: дети ранжируют родителя")
+    ap.add_argument("--prefetch", type=int, default=PREFETCH,
+                    help="кандидатов на ветку гибрида; с --group-by брать больше, детей у родителя несколько")
     args = ap.parse_args()
     key = open(args.key_file).read().strip()
     url = args.url.rstrip("/")
@@ -83,15 +86,18 @@ def main() -> None:
     kmax = max(K_VALUES)
     per_query: dict[str, dict[str, list[list[float]]]] = {d: {str(k): [] for k in K_VALUES} for d in DATASETS}
     overlap: dict[int, list[float]] = {k: [] for k in K_VALUES}
-    lat_eval, lat_live = [], []
+    lat_eval, lat_live, returned = [], [], []
     for i, q in enumerate(queries):
         vec = qv[i * args.dim:(i + 1) * args.dim].tolist()
         t0 = time.perf_counter()
-        hits = query(url, key, args.collection, body_for(args.mode, vec, q["sparse"], kmax, exact=True), args.group_by)
+        hits = query(url, key, args.collection,
+                     body_for(args.mode, vec, q["sparse"], kmax, exact=True, prefetch=args.prefetch), args.group_by)
+        returned.append(len(hits))
         lat_eval.append((time.perf_counter() - t0) * 1000)
         if args.mode != "bm25":  # так поиск работал бы вживую: dense через HNSW
             t0 = time.perf_counter()
-            live = query(url, key, args.collection, body_for(args.mode, vec, q["sparse"], kmax, exact=False), args.group_by)
+            live = query(url, key, args.collection,
+                         body_for(args.mode, vec, q["sparse"], kmax, exact=False, prefetch=args.prefetch), args.group_by)
             lat_live.append((time.perf_counter() - t0) * 1000)
         else:
             live = hits
@@ -105,6 +111,7 @@ def main() -> None:
     result = {"collection": args.collection, "mode": args.mode, "queries": len(queries),
               "datasets": {}, "all": {}, "per_query": per_query,
               "live_vs_exact": {str(k): 100 * statistics.mean(v) for k, v in overlap.items()},
+              "returned": {"mean": statistics.mean(returned), "min": min(returned), "limit": kmax},
               "latency_ms": {"eval": pct(lat_eval), "live": pct(lat_live or lat_eval),
                              "note": "один клиент, последовательно, top-64, с узла через ClusterIP"}}
     for d in DATASETS:
