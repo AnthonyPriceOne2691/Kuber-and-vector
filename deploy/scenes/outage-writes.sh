@@ -30,7 +30,7 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 K=$(mktemp -d); PF=""
 trap 'kill $PF 2>/dev/null; rm -rf "$K"; touch done' EXIT
 ( umask 077; kubectl -n qdrant get secret qdrant-keys -o go-template='{{index .data "api-key"}}' | base64 -d > "$K/rw" )
-POD=$(kubectl -n qdrant get pods --field-selector spec.nodeName=machine-1 -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl -n qdrant get pods -l app.kubernetes.io/name=qdrant --field-selector spec.nodeName=machine-1 -o jsonpath='{.items[0].metadata.name}')
 kubectl -n qdrant port-forward "pod/$POD" 16350:6333 >/dev/null 2>&1 & PF=$!
 for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:16350/ && break; sleep 1; done
 python3 -I -B outage_writes.py write --url http://127.0.0.1:16350 --key-file "$K/rw" --seconds "$1" --out writes.json > write.log 2>&1
@@ -63,7 +63,7 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 K=$(mktemp -d); PF=""
 trap 'kill $PF 2>/dev/null; rm -rf "$K"' EXIT
 ( umask 077; kubectl -n qdrant get secret qdrant-keys -o go-template='{{index .data "api-key"}}' | base64 -d > "$K/rw" )
-POD=$(kubectl -n qdrant get pods --field-selector spec.nodeName=machine-1 -o jsonpath='{.items[0].metadata.name}')
+POD=$(kubectl -n qdrant get pods -l app.kubernetes.io/name=qdrant --field-selector spec.nodeName=machine-1 -o jsonpath='{.items[0].metadata.name}')
 kubectl -n qdrant port-forward "pod/$POD" 16351:6333 >/dev/null 2>&1 & PF=$!
 for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:16351/ && break; sleep 1; done
 python3 -I -B outage_writes.py verify --url http://127.0.0.1:16351 --key-file "$K/rw" --log writes.json

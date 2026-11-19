@@ -27,7 +27,7 @@ for m in "$@"; do
   [ "$s" = True ] || { echo "узел $m не стал Ready"; exit 1; }
   mark "узел $m Ready"
   for _ in $(seq 1 150); do
-    r=$(kc -n qdrant get pods --field-selector "spec.nodeName=$m" -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null || true)
+    r=$(kc -n qdrant get pods -l app.kubernetes.io/name=qdrant --field-selector "spec.nodeName=$m" -o jsonpath='{.items[*].status.containerStatuses[*].ready}' 2>/dev/null || true)
     [ "$r" = true ] && break; sleep 2
   done
   [ "$r" = true ] || { echo "пир Qdrant на $m не готов"; exit 1; }
@@ -43,7 +43,7 @@ K=$(mktemp -d); PF=""
 trap 'kill $PF 2>/dev/null; rm -rf "$K" /tmp/replicas.py' EXIT
 ( umask 077; kubectl -n qdrant get secret qdrant-keys -o go-template='{{index .data "read-only-api-key"}}' | base64 -d > "$K/ro" )
 port=16360
-for pod in $(kubectl -n qdrant get pods -o jsonpath='{.items[*].metadata.name}'); do
+for pod in $(kubectl -n qdrant get pods -l app.kubernetes.io/name=qdrant -o jsonpath='{.items[*].metadata.name}'); do
   kubectl -n qdrant port-forward "pod/$pod" "$port:6333" >/dev/null 2>&1 & PF="$PF $!"
   for _ in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$port/" && break; sleep 1; done
   echo "$pod $(kubectl -n qdrant get pod "$pod" -o jsonpath='{.spec.nodeName}') $port" >> "$K/pods"

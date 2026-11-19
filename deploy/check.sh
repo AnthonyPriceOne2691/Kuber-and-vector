@@ -24,7 +24,7 @@ mac_reach() { nc -z -G 3 -w 3 "$1" "$2"; }                           # с Мак
 echo "кластер"
 check "три узла Ready" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl get nodes --no-headers | awk '\$2==\"Ready\"' | wc -l) -eq 3 ]"
 check "etcd из трёх членов" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl get nodes -l node-role.kubernetes.io/etcd=true --no-headers | wc -l) -eq 3 ]"
-check "три пира Qdrant, по одному на машину" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n qdrant get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
+check "три пира Qdrant, по одному на машину" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n qdrant get pods -l app.kubernetes.io/name=qdrant -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
 check "три пода поиска на трёх машинах" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n search get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
 psa_rejects() {  # привилегированный под в search сервер отклоняет ещё до запуска (dry-run)
   kc -n search run psa-probe --image=localhost/search:stage2 --restart=Never --dry-run=server \

@@ -50,7 +50,7 @@ for set in $SETS; do
 done
 # карта шардов: каждого пира спрашиваем через свой туннель
 : > "$K/pods"; port=16340
-for pod in $(kubectl -n qdrant get pods -o jsonpath='{.items[*].metadata.name}'); do
+for pod in $(kubectl -n qdrant get pods -l app.kubernetes.io/name=qdrant -o jsonpath='{.items[*].metadata.name}'); do
   forward "pod/$pod" "$port"
   echo "$pod $(kubectl -n qdrant get pod "$pod" -o jsonpath='{.spec.nodeName}') $port" >> "$K/pods"
   port=$((port + 1))
