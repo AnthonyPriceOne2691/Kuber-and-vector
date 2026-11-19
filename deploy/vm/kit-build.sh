@@ -3,6 +3,8 @@
 #   ./kit-build.sh            основной комплект  -> kit/vm
 #   ./kit-build.sh security   nmap, trivy с базой, kube-bench -> kit/vm-security
 #   ./kit-build.sh falco      образ и чарт Falco -> kit/vm-falco
+#   ./kit-build.sh monitoring Prometheus, node_exporter, Grafana -> kit/vm-monitoring
+#                             (только после «да» владельца на список в deploy/monitoring/README.md)
 # Шаги: одноразовая сборочная ВМ из machine.yaml (роль builder) -> внутри неё скрипт
 # качает всё по утверждённому списку и сверяет суммы -> комплект копируется на Мак,
 # суммы проверяются ещё раз -> сборочная ВМ удаляется.
@@ -17,7 +19,8 @@ case "$PART" in
   base)     FETCH=kit-fetch.sh;          DEST="$ROOT/kit/vm" ;;
   security) FETCH=kit-fetch-security.sh; DEST="$ROOT/kit/vm-security" ;;
   falco)    FETCH=kit-fetch-falco.sh;    DEST="$ROOT/kit/vm-falco" ;;
-  *) echo "часть комплекта: base, security или falco"; exit 1 ;;
+  monitoring) FETCH=kit-fetch-monitoring.sh; DEST="$ROOT/kit/vm-monitoring" ;;
+  *) echo "часть комплекта: base, security, falco или monitoring"; exit 1 ;;
 esac
 VM="builder-$PART"
 

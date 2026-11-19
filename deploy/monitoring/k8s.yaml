@@ -1,0 +1,35 @@
+# Что мониторингу нужно в кластере: метрики Falco по машинам для Prometheus на machine-4.
+# Ставит deploy/monitoring/install.sh, адрес machine-4 (ENTRY_IP) подставляет он же.
+# Сами метрики включает deploy/falco/values.yaml (metrics.enabled, README мониторинга);
+# Service чарта не нужен (metrics.service.create: false), вместо него этот NodePort.
+#
+# NodePort 30765 с externalTrafficPolicy Local: каждая машина отвечает своим подом Falco
+# (DaemonSet), выключенная машина просто пропадает из целей, как у поиска на 30080.
+apiVersion: v1
+kind: Service
+metadata:
+  name: falco-metrics-node
+  namespace: falco
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: falco
+    app.kubernetes.io/instance: falco
+  ports:
+    - {name: metrics, port: 8765, targetPort: 8765, nodePort: 30765, protocol: TCP}
+---
+# «Запрещено всё, кроме нужного»: к подам Falco входящие только с machine-4 на порт метрик.
+# Других входящих Falco не нужно; пробы kubelet идут с самой машины, их правила сети k3s
+# пропускают (так уже работают пробы поиска при запрете входа). Исходящие не трогаем.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: falco-metrics-ingress, namespace: falco}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: falco, app.kubernetes.io/instance: falco}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: {cidr: ENTRY_IP/32}
+      ports: [{port: 8765, protocol: TCP}]

@@ -1,0 +1,16 @@
+# Источник данных Grafana: Prometheus на той же machine-4. uid закреплён, на него ссылается
+# дашборд. timeInterval равен интервалу скрейпа, тогда $__rate_interval не уходит ниже него.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 5s
+      httpMethod: POST
+      prometheusType: Prometheus
+      prometheusVersion: 3.16.0

@@ -1,0 +1,14 @@
+# Дашборды из файлов: /etc/grafana/dashboards (туда install.sh кладёт stand.json).
+# Правки в интерфейсе не сохраняются: источник правды это файл в git.
+apiVersion: 1
+providers:
+  - name: stand
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

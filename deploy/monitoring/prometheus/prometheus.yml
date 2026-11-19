@@ -1,0 +1,62 @@
+# Prometheus стенда на machine-4: наблюдатель вне кластера, слушает только 127.0.0.1:9090.
+# Цели по машинам лежат в /etc/prometheus/targets/*.json. Их пишет deploy/monitoring/install.sh
+# по адресам lima0; у каждой цели метка machine, она же имя узла k8s и сервера HAProxy.
+# Скрейп раз в 5 с: в сцене «выключаем машину» всё происходит за десятки секунд.
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Сам Prometheus: только память процесса и число серий, чтобы сверить оценку памяти замером
+  - job_name: prometheus
+    static_configs:
+      - targets: ['127.0.0.1:9090']
+        labels: {machine: machine-4}
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'process_resident_memory_bytes|prometheus_tsdb_head_series'
+        action: keep
+
+  # Вход HAProxy: встроенный экспортёр деба 2.8.30 из комплекта (собран с USE_PROMEX=1),
+  # слушает 127.0.0.1:8404 вместе со статистикой. Берём фронтенды (что получили пользователи)
+  # и серверы (машины); общие метрики процесса HAProxy не нужны.
+  - job_name: haproxy
+    params:
+      scope: [frontend, server]
+    static_configs:
+      - targets: ['127.0.0.1:8404']
+    metric_relabel_configs:
+      # серверы бэкенда search названы именами машин: даём им ту же метку machine
+      - source_labels: [proxy, server]
+        regex: 'search;(.+)'
+        target_label: machine
+        replacement: '$1'
+
+  # Процессор, память и нагрузка всех четырёх машин (node_exporter с тремя коллекторами)
+  - job_name: node
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/node.json]
+
+  # Сервис поиска: NodePort 30080 с externalTrafficPolicy Local, каждая машина отвечает своим
+  # подом. Правило сети search-ingress уже пускает machine-4 на 8080; через 443 /metrics наружу
+  # не выходит (HAProxy пускает только /search и /healthz).
+  - job_name: search
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/search.json]
+
+  # Falco: счётчики сработавших правил и потерь событий ядра, NodePort 30765 (k8s.yaml)
+  - job_name: falco
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/falco.json]
+
+  # Qdrant через шлюз в кластере (развилка в README): метрики пира своей машины, ключ Qdrant
+  # остаётся в кластере. Пока шлюза нет, install.sh оставляет список целей пустым.
+  # Берём только состояние: коллекции, реплики, переносы шардов, консенсус, память.
+  - job_name: qdrant
+    file_sd_configs:
+      - files: [/etc/prometheus/targets/qdrant.json]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'app_info|collections_total|collection_.+|cluster_.+|memory_resident_bytes'
+        action: keep

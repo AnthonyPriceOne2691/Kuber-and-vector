@@ -1,0 +1,32 @@
+# Prometheus стенда на machine-4 (deploy/monitoring/install.sh).
+# Только 127.0.0.1:9090. Хранение 7 дней и не больше 2 ГБ (диск машины 20 ГБ).
+# Потолок памяти задан явно: на этой же машине вход HAProxy, при нехватке памяти ядро должно
+# убить Prometheus или Grafana, а не вход (OOMScoreAdjust).
+[Unit]
+Description=Prometheus (стенд, machine-4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --storage.tsdb.retention.time=7d \
+  --storage.tsdb.retention.size=2GB \
+  --web.listen-address=127.0.0.1:9090
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+MemoryHigh=448M
+MemoryMax=512M
+OOMScoreAdjust=500
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/prometheus
+
+[Install]
+WantedBy=multi-user.target
