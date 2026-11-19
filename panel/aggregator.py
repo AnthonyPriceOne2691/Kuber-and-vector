@@ -734,6 +734,10 @@ def make_handler(panel: Panel, static_dir: str, token: str | None = None, verbos
     class Handler(BaseHTTPRequestHandler):
         server_version = "stand-panel/1"
         protocol_version = "HTTP/1.1"
+        # TCP_NODELAY: ответ уходит двумя записями (заголовки, тело), и с Nagle тело ждало отложенного
+        # подтверждения клиента. Falco шлёт тревоги по одному keep-alive соединению, и каждая после
+        # первой стояла 41 мс (замер 19.11: 15 тревог выходили из Falco 0,6 с вместо миллисекунд).
+        disable_nagle_algorithm = True
 
         def version_string(self) -> str:  # без версии Python в заголовке Server
             return self.server_version

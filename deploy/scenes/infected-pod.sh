@@ -10,7 +10,7 @@
 # Итог: что отбито, через сколько пришла первая тревога, ошибки у пользователя.
 #   deploy/scenes/infected-pod.sh [machine-2]
 #   RATE=20 WARM=15 HOLD=10 TAIL=15 по умолчанию
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -40,14 +40,16 @@ mark "load started"
 sleep "$WARM"
 
 mark "attacker has a shell in pod $POD"
-# Оболочка читает ключ пода (Falco: CRITICAL) и запускает Python с попытками, код идёт по stdin
-# shellcheck disable=SC2086,SC2016  # соседи это список адресов; $(cat …) раскрывает оболочка пода
-kc -n search exec -i "$POD" -- sh -c 'KEY=$(cat /run/secrets/qdrant/read-only-api-key); export KEY; exec python3 -I - "$@"' \
+# Оболочка первой командой записывает своё время (T0, начало атаки по часам этой машины), читает
+# ключ пода (Falco: CRITICAL) и запускает Python с попытками, код идёт по stdin
+# shellcheck disable=SC2086,SC2016  # соседи это список адресов; $(…) раскрывает оболочка пода
+kc -n search exec -i "$POD" -- sh -c 'T0=$(date +%s.%N); KEY=$(cat /run/secrets/qdrant/read-only-api-key); export KEY T0; exec python3 -I - "$@"' \
   sh $neighbors < "$HERE/attack_pod.py" > "$OUT/attack.tsv"
 awk -F'\t' '$2 != "start" && $2 != "end" {print "    " $4 ": " $2 " (" $3 ")"}' "$OUT/attack.tsv"
 mark "attempts finished"
 sleep 3
-kc -n falco logs "$FALCO" --since=5m > "$OUT/falco.jsonl" 2>/dev/null || true
+# Метки времени ставит containerd той же машины: по ним считаем задержку тревог (infected_summary.py)
+kc -n falco logs "$FALCO" --since=5m --timestamps > "$OUT/falco.log" 2>/dev/null || true
 
 kc -n search label pod "$POD" app=quarantine --overwrite >/dev/null
 mark "pod $POD quarantined: out of the service, network cut by default-deny"

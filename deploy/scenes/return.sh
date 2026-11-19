@@ -4,7 +4,7 @@
 # (сам Kubernetes поды обратно не переносит). Печатает время каждого шага от старта.
 #   deploy/scenes/return.sh [machine-2 [machine-3]]
 #   COLLS="contracts_rf2 contracts_rf3" по умолчанию; WAIT=300 сколько ждать копий
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

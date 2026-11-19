@@ -9,6 +9,7 @@ import json
 import os
 import re
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -59,6 +60,31 @@ class _Server:
     def close(self):
         self.srv.shutdown()
         self.srv.server_close()
+
+
+class KeepAliveTest(unittest.TestCase):
+    """Falco шлёт тревоги по одному keep-alive соединению. Без TCP_NODELAY тело ответа ждало отложенного
+    подтверждения заголовков, и каждый запрос после первого стоял 41 мс (замер на стенде 19.11)."""
+
+    def test_nagle_disabled(self):
+        panel = aggregator.build(aggregator.parse_args(["--mock", "--mock-start", "84"]))
+        self.assertTrue(aggregator.make_handler(panel, STATIC, "t").disable_nagle_algorithm)
+
+    def test_keep_alive_requests_do_not_stall(self):
+        panel = aggregator.build(aggregator.parse_args(["--mock", "--mock-start", "84"]))
+        s = _Server(panel, token="t")
+        self.addCleanup(s.close)
+        conn = http.client.HTTPConnection("127.0.0.1", s.srv.server_address[1], timeout=5)
+        self.addCleanup(conn.close)
+        times = []
+        for _ in range(6):
+            t = time.monotonic()
+            conn.request("POST", "/api/event", body=b"{}", headers={"Content-Type": "application/json"})
+            r = conn.getresponse()
+            r.read()
+            self.assertEqual(r.status, 403)
+            times.append(time.monotonic() - t)
+        self.assertLess(sorted(times[1:])[2], 0.02, f"запросы в одном соединении, с: {times}")
 
 
 class ServerTest(unittest.TestCase):

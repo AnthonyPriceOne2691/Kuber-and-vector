@@ -5,7 +5,7 @@
 #   deploy/scenes/load.sh stop FILE.json    остановить, забрать снимок, напечатать итог
 # Снимок статистики (раз в 0,5 с) генератор пишет в STATS: его же читает панель на machine-4
 # (deploy/panel, --load-stats). У службы панели свой /tmp, поэтому снимок лежит в /run/stand-load.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

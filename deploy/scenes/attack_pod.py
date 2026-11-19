@@ -60,6 +60,15 @@ def http(method: str, url: str, key: str = "", data: bytes | None = None) -> tup
         return 0, type(e).__name__
 
 
+def started() -> float:
+    """Когда атакующий получил оболочку: T0 записывает сама оболочка первой командой (date +%s.%N),
+    до чтения ключа и до запуска Python. Без T0 (запуск руками) берём текущее время."""
+    try:
+        return float(os.environ.get("T0", ""))
+    except ValueError:
+        return time.time()
+
+
 def main(argv: list[str]) -> int:
     key = os.environ.get("KEY", "").strip()
     qdrant = os.environ.get("QDRANT_URL", "").rstrip("/")
@@ -71,7 +80,7 @@ def main(argv: list[str]) -> int:
         out.write(f"{time.time():.3f}\t{what}\t{text}\t{'blocked' if blocked else 'passed'}\n")
         out.flush()
 
-    out.write(f"{time.time():.3f}\tstart\t{socket.gethostname()}\t-\n")
+    out.write(f"{started():.3f}\tstart\t{socket.gethostname()}\t-\n")
     report("exfiltrate to the internet (1.1.1.1:443)", tcp("1.1.1.1", 443))
     report("resolve a name via DNS (example.com)", dns("example.com"))
     sa = "/var/run/secrets/kubernetes.io/serviceaccount/token"

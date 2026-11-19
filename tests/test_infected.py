@@ -63,6 +63,18 @@ class AttackTest(unittest.TestCase):
         self.assertEqual((rows[0][1], rows[-1][1]), ("start", "end"))
         self.assertEqual([r[0] for r in q.requests], ["DELETE", "PUT", "GET"])
 
+    def test_start_is_when_the_shell_began(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"T0": "1795109323.012345678", "KEY": "", "QDRANT_URL": ""}), \
+                mock.patch.object(attack, "tcp", return_value=("no connection", True)), \
+                mock.patch.object(attack, "dns", return_value=("not resolved", True)), \
+                mock.patch.object(attack, "http", return_value=(403, "forbidden")), \
+                contextlib.redirect_stdout(out):
+            attack.main(["-"])
+        self.assertEqual(out.getvalue().split("\t", 1)[0], "1795109323.012")
+        with mock.patch.dict(os.environ, {"T0": "не число"}):
+            self.assertGreater(attack.started(), 1.7e9)
+
     def test_tcp_refused_is_blocked(self):
         host, port = closed_port_url().rsplit("//", 1)[1].split(":")
         text, blocked = attack.tcp(host, int(port))
@@ -79,8 +91,11 @@ def attack_tsv(start: float, all_blocked: bool = True) -> str:
     return "\n".join(rows) + "\n"
 
 
-def falco_line(ts: str, rule: str, pod: str = "search-abc") -> str:
-    return json.dumps({"time": ts, "rule": rule, "priority": "Warning", "output_fields": {"k8s.pod.name": pod}})
+def falco_line(ts: str, rule: str, pod: str | None = "search-abc", proc: str = "") -> str:
+    fields = {"k8s.pod.name": pod} if pod else {}
+    if proc:
+        fields["proc.name"] = proc
+    return json.dumps({"time": ts, "rule": rule, "priority": "Warning", "output_fields": fields})
 
 
 class SummaryTest(unittest.TestCase):
@@ -108,9 +123,62 @@ class SummaryTest(unittest.TestCase):
         text, ok = infected.report(self.run_dir(attack_tsv(start), falco))
         self.assertTrue(ok, text)
         self.assertIn("Blocked 2 of 2.", text)
-        self.assertIn("Falco alerts 4, the first 50 ms after the attack started.", text)
-        self.assertIn("| Stand forbidden connection from search pod | 2 |", text)
+        self.assertIn("Falco alerts 4, the first 50 ms after the attacker got a shell.", text)
+        self.assertIn("| Stand forbidden connection from search pod | 2 | 1000 ms |", text)
         self.assertIn("Reading the database went through", text)
+
+    def test_container_log_stamp_beats_falco_clock(self):
+        # 19.11: после жёстких перезапусков машины поле time у Falco уехало на +0,48 с;
+        # метка containerd идёт по часам пода, по ней и считаем. Без тревоги на date началом служит T0.
+        start = infected.log_time("2026-11-19T20:28:43.000000000+03:00")
+        falco = "\n".join([
+            "2026-11-19T20:28:43.010000000+03:00 " + falco_line("2026-11-19T17:28:43.490000000Z",
+                                                                "Falco internal: syscall event drop", pod=None),
+            "2026-11-19T20:28:43.020000000+03:00 " + falco_line("2026-11-19T17:28:43.500000000Z",
+                                                                "Stand shell in search pod"),
+            "2026-11-19T17:28:43.083000000Z " + falco_line("2026-11-19T17:28:43.560000000Z",
+                                                           "Stand forbidden connection from search pod"),
+            "2026-11-19T20:28:43.090000000+03:00 not json",
+        ])
+        run = self.run_dir(attack_tsv(start), None)
+        with open(os.path.join(run, "falco.log"), "w", encoding="utf-8") as f:
+            f.write(falco)
+        text, ok = infected.report(run)
+        self.assertTrue(ok, text)
+        self.assertIn("Falco alerts 2, the first 20 ms after the attacker got a shell.", text)
+        self.assertIn("| Stand forbidden connection from search pod | 1 | 83 ms |", text)
+        self.assertNotIn("Falco internal", text)
+
+    def test_shell_start_from_date_anchor(self):
+        # Оболочка запустилась за 2 мс до того, как date записал T0; часы Falco впереди на 480 мс.
+        # Сдвиг узнаём по date (время Falco 479,7 мс после T0), запуск оболочки по часам пода T0 - 1,7 мс,
+        # тревога на неё вышла в T0 - 1 мс, то есть через 0,7 мс после запуска.
+        t0 = infected.log_time("2026-11-19T20:28:43.000000000+03:00")
+        falco = "\n".join([
+            "2026-11-19T20:28:42.999000000+03:00 " + falco_line("2026-11-19T17:28:43.478000000Z",
+                                                                "Stand shell in search pod", proc="sh"),
+            "2026-11-19T20:28:43.000800000+03:00 " + falco_line("2026-11-19T17:28:43.479700000Z",
+                                                                "Stand unexpected process in search pod", proc="date"),
+            "2026-11-19T20:28:43.083000000+03:00 " + falco_line("2026-11-19T17:28:43.505000000Z",
+                                                                "Stand forbidden connection from search pod",
+                                                                proc="python3"),
+        ])
+        run = self.run_dir(attack_tsv(t0), None)
+        with open(os.path.join(run, "falco.log"), "w", encoding="utf-8") as f:
+            f.write(falco)
+        alerts = infected.parse_falco(falco, "search-abc")
+        self.assertAlmostEqual(infected.shell_started(alerts, t0) - t0, -0.0017, places=4)
+        text, ok = infected.report(run)
+        self.assertTrue(ok, text)
+        self.assertIn("Falco alerts 3, the first 1 ms after the attacker got a shell.", text)
+        self.assertIn("| Stand shell in search pod | 1 | 1 ms |", text)
+        self.assertIn("| Stand forbidden connection from search pod | 1 | 85 ms |", text)
+
+    def test_log_time_formats(self):
+        self.assertAlmostEqual(infected.log_time("2026-11-19T17:28:43.451785625Z"),
+                               infected.log_time("2026-11-19T20:28:43.451785+03:00"), places=6)
+        with self.assertRaises(ValueError):
+            infected.log_time("Thu Nov 19 10:00:00 2026:")
 
     def test_leak_or_silence_fails(self):
         start = infected.falco_time("2026-11-19T10:00:00Z")
