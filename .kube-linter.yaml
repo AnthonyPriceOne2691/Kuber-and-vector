@@ -1,0 +1,4 @@
+# kube-linter для манифестов стенда и чартов с нашими values (job manifests в .github/workflows/ci.yml).
+# Пока встроенные проверки по умолчанию. Исключения будут добавляться сюда по одному, каждое с причиной.
+checks:
+  doNotAutoAddDefaults: false

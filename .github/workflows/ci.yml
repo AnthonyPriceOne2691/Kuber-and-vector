@@ -1,6 +1,7 @@
 # Проверки на каждый push и pull request. Без секретов и без прав на запись: токен только читает код.
-# Сторонний код здесь один: официальный actions/checkout, закреплён по коммиту (тег можно
-# перевесить, коммит нет). Зависимости Python те же версии FastAPI и httpx, что в образе поиска.
+# Сторонний код: официальный actions/checkout, закреплён по коммиту (тег можно перевесить, коммит нет);
+# в job manifests helm, kubeconform и kube-linter (одобрены владельцем 19.11), каждый по закреплённому
+# sha256, и схемы Kubernetes по коммиту. Зависимости Python те же версии FastAPI и httpx, что в образе поиска.
 name: ci
 on:
   push:
@@ -39,3 +40,65 @@ jobs:
             shellcheck --version | head -2
             git ls-files -z '*.sh' | xargs -0 shellcheck --severity=error
           fi
+
+  # Манифесты стенда и чарты Qdrant и Falco с нашими values: helm lint, helm template, kubeconform
+  # против схем Kubernetes 1.37.2 (версия k3s стенда), kube-linter. Чарты те же, что в комплекте:
+  # sha256 совпадает с kit/vm/SHA256SUMS и kit/vm-falco/SHA256SUMS.
+  manifests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      K8S: "1.37.2"
+      HELM: "4.3.2"  # как в комплекте; сумма из get.helm.sh и из описания выпуска совпали
+      HELM_SHA256: d1c0278d46beab79582d7e50f5b3dc206944ba8e577cde618513fd07daa53983
+      KUBECONFORM: "0.8.0"  # сумма из CHECKSUMS выпуска и digest GitHub совпали
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+      KUBE_LINTER: "0.8.3"  # digest GitHub; подпись sigstore у выпуска есть, cosign здесь не ставим
+      KUBE_LINTER_SHA256: 618d299a3e2839c8ca9d86fce0db617be0fba41f0fecbbbfb7fbf1c04299fae1
+      QDRANT_CHART_SHA256: 06cc84d863f38ada32d27e3c1475d70445f16a195a4e9a65f46bf6c0dedf84e7
+      FALCO_CHART_SHA256: b8a1aa984c3d513ab1639be760e6a07a9eb203d4da77a45a1512d382b6d3687d
+      SCHEMAS: https://raw.githubusercontent.com/yannh/kubernetes-json-schema/11639286f15b208b6c7f1f93bc2c1a70f42cfbcb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: helm, kubeconform и kube-linter по закреплённым sha256
+        run: |
+          set -euo pipefail
+          T="$RUNNER_TEMP/tools"; mkdir -p "$T/bin"
+          get() { curl -fsSL --retry 3 -o "$T/$2" "$1"; echo "$3  $T/$2" | sha256sum -c -; }
+          get "https://get.helm.sh/helm-v$HELM-linux-amd64.tar.gz" helm.tgz "$HELM_SHA256"
+          tar -xzf "$T/helm.tgz" -C "$T" linux-amd64/helm
+          install -m 0755 "$T/linux-amd64/helm" "$T/bin/helm"
+          get "https://github.com/yannh/kubeconform/releases/download/v$KUBECONFORM/kubeconform-linux-amd64.tar.gz" kubeconform.tgz "$KUBECONFORM_SHA256"
+          tar -xzf "$T/kubeconform.tgz" -C "$T/bin" kubeconform
+          get "https://github.com/stackrox/kube-linter/releases/download/v$KUBE_LINTER/kube-linter-linux" kube-linter "$KUBE_LINTER_SHA256"
+          install -m 0755 "$T/kube-linter" "$T/bin/kube-linter"
+          echo "$T/bin" >> "$GITHUB_PATH"
+          "$T/bin/helm" version --short; "$T/bin/kubeconform" -v; "$T/bin/kube-linter" version
+
+      - name: Манифесты стенда и чарты с нашими values
+        run: |
+          set -euo pipefail
+          M="$RUNNER_TEMP/manifests"; C="$RUNNER_TEMP/charts"; mkdir -p "$M/charts" "$C"
+          python3 -I -B deploy/ci/render.py "$M"
+          curl -fsSL --retry 3 -o "$C/qdrant.tgz" https://github.com/qdrant/qdrant-helm/releases/download/qdrant-1.20.2/qdrant-1.20.2.tgz
+          curl -fsSL --retry 3 -o "$C/falco.tgz" https://github.com/falcosecurity/charts/releases/download/falco-9.2.2/falco-9.2.2.tgz
+          printf '%s  %s\n' "$QDRANT_CHART_SHA256" "$C/qdrant.tgz" "$FALCO_CHART_SHA256" "$C/falco.tgz" | sha256sum -c -
+          helm lint "$C/qdrant.tgz" -f deploy/qdrant/values.yaml
+          helm lint "$C/falco.tgz" -f deploy/falco/values.yaml
+          helm template qdrant "$C/qdrant.tgz" -n qdrant -f deploy/qdrant/values.yaml --kube-version "$K8S" > "$M/charts/qdrant.yaml"
+          helm template falco "$C/falco.tgz" -n falco -f deploy/falco/values.yaml --kube-version "$K8S" > "$M/charts/falco.yaml"
+          grep -c '^kind:' "$M/charts/qdrant.yaml" "$M/charts/falco.yaml"
+
+      - name: kubeconform против схем Kubernetes 1.37.2
+        run: |
+          kubeconform -strict -summary -output text -kubernetes-version "$K8S" \
+            -schema-location "$SCHEMAS/{{.NormalizedKubernetesVersion}}-standalone{{.StrictSuffix}}/{{.ResourceKind}}{{.KindSuffix}}.json" \
+            "$RUNNER_TEMP/manifests"
+
+      - name: kube-linter
+        # первый прогон собирает замечания; после разбора исключений в .kube-linter.yaml шаг станет гейтом
+        continue-on-error: true
+        run: kube-linter lint --config .kube-linter.yaml "$RUNNER_TEMP/manifests"
