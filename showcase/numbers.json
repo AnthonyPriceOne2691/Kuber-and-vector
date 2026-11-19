@@ -164,14 +164,50 @@
     {
       "id": "latency-p95",
       "title": "Latency under load",
-      "value": null,
-      "unit": "ms p95"
+      "value": 33,
+      "unit": "ms p95 at 40 requests per second",
+      "tone": "neutral",
+      "facts": [
+        {
+          "label": "p50",
+          "value": 24,
+          "unit": "ms"
+        },
+        {
+          "label": "p99",
+          "value": 36,
+          "unit": "ms"
+        },
+        {
+          "label": "vectors searched",
+          "value": 1000000
+        }
+      ],
+      "note": "Most of it is embedding the question on the laptop"
     },
     {
       "id": "vector-limit",
       "title": "Vector limit",
-      "value": null,
-      "unit": "vectors on the stand"
+      "value": 1000000,
+      "unit": "vectors, no limit reached",
+      "tone": "good",
+      "facts": [
+        {
+          "label": "Qdrant memory at 1M, of the pod limit",
+          "value": 46,
+          "unit": "%"
+        },
+        {
+          "label": "requests per second held",
+          "value": 40
+        },
+        {
+          "label": "p99 at 40 per second",
+          "value": 36,
+          "unit": "ms"
+        }
+      ],
+      "note": "Synthetic vectors, int8 in memory, originals on disk"
     },
     {
       "id": "model-answer",
