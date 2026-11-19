@@ -282,7 +282,7 @@ def _retrieve(q: str, k: int, pair: binding.Pair | None = None) -> tuple[list[di
     try:
         vector = _embed(pair.model, [embed_models.query_text(pair.model, q)])[0]
     except Exception:
-        raise Unavailable("векторизатор недоступен")
+        raise Unavailable("embedder unavailable")
     t1 = time.perf_counter()
     METRICS.observe("search_stage_seconds", {"stage": "embed"}, t1 - t0)
     if SEARCH_MODE == "hybrid":
@@ -295,7 +295,7 @@ def _retrieve(q: str, k: int, pair: binding.Pair | None = None) -> tuple[list[di
         result, attempts = _qdrant(f"/collections/{pair.collection}/points/query", body)
         points = result["result"]["points"]
     except Exception:
-        raise Unavailable("база недоступна")
+        raise Unavailable("vector database unavailable")
     t2 = time.perf_counter()
     METRICS.observe("search_stage_seconds", {"stage": "qdrant"}, t2 - t1)
     if attempts > 1:

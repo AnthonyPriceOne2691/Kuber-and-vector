@@ -111,7 +111,7 @@ class EmbedTest(FilterTest):
         self.patch(UPSTREAM=closed_port_url())
         code, body = self.send("/api/embed", {"model": "bge-m3", "input": "hello"})
         self.assertEqual(code, 502)
-        self.assertEqual(body["error"], "векторизатор недоступен")
+        self.assertEqual(body["error"], "embedder unavailable")
 
 
 class DenyTest(FilterTest):

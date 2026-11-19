@@ -131,7 +131,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._deny(400, "input: от 1 до 64 строк длиной до 8000 знаков")
         data = self._upstream("/api/embed", {"model": model, "input": inputs, "truncate": True}, 30)
         if data is None:
-            return self._reply(502, json.dumps({"error": "векторизатор недоступен"}).encode())
+            return self._reply(502, json.dumps({"error": "embedder unavailable"}).encode())
         self._reply(200, data)
 
     def _chat(self) -> None:

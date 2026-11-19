@@ -186,14 +186,14 @@ class EndpointsTest(StandTest):
         self.patch(OLLAMA_URL=closed_port_url())
         r = self.client.get("/search", params={"q": "governing law"})
         self.assertEqual(r.status_code, 503)
-        self.assertEqual(r.json()["error"], "векторизатор недоступен")
+        self.assertEqual(r.json()["error"], "embedder unavailable")
         self.assertEqual(self.qdrant.requests, [])
 
     def test_database_down(self):
         self.patch(QDRANT_URL=closed_port_url())
         r = self.client.get("/search", params={"q": "governing law"})
         self.assertEqual(r.status_code, 503)
-        self.assertEqual(r.json(), {"error": "база недоступна", "served_by": {"node": "machine-2", "pod": "search-abc"}})
+        self.assertEqual(r.json(), {"error": "vector database unavailable", "served_by": {"node": "machine-2", "pod": "search-abc"}})
 
     def test_readyz(self):
         self.assertEqual(self.client.get("/readyz").json(), {"ready": True})

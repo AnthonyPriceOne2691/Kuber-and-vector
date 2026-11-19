@@ -3,13 +3,15 @@
 # копии шардов снова Active и совпадают, и разложить поиск обратно по трём машинам
 # (сам Kubernetes поды обратно не переносит). Печатает время каждого шага от старта.
 #   deploy/scenes/return.sh [machine-2 [machine-3]]
-#   COLLS="contracts_rf2 contracts_rf3" по умолчанию; WAIT=300 сколько ждать копий
+#   COLLS=auto по умолчанию: все коллекции кластера, кроме синтетики замера предела (synth_*);
+#   список приходит от первого ответившего пира. Явный список: COLLS="contracts_rf2 contracts_rf3".
+#   WAIT=300 сколько ждать копий
 # Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 [ $# -gt 0 ] || set -- machine-2
-COLLS="${COLLS:-contracts_rf2 contracts_rf3}"
+COLLS="${COLLS:-auto}"
 WAIT="${WAIT:-300}"
 t0=$(date +%s)
 mark() { echo "  +$(( $(date +%s) - t0 )) s  $*"; }
@@ -49,6 +51,19 @@ for pod in $(kubectl -n qdrant get pods -l app.kubernetes.io/name=qdrant -o json
   echo "$pod $(kubectl -n qdrant get pod "$pod" -o jsonpath='{.spec.nodeName}') $port" >> "$K/pods"
   port=$((port + 1))
 done
+# Коллекции, которые ждём: с появлением реестра и коллекции второй модели список не держим руками,
+# коллекцию, которой нет, replicas.py принял бы за молчащий пир и ждал бы впустую
+if [ "$COLLS" = auto ]; then
+  COLLS=""
+  while read -r _pod _node p; do
+    COLLS=$(curl -sf -m 3 -H "api-key: $(cat "$K/ro")" "http://127.0.0.1:$p/collections" | python3 -I -c '
+import json, sys
+names = [c["name"] for c in json.load(sys.stdin)["result"]["collections"]]
+print(" ".join(sorted(n for n in names if not n.startswith("synth_"))))' 2>/dev/null) || COLLS=""
+    [ -n "$COLLS" ] && break
+  done < "$K/pods"
+  [ -n "$COLLS" ] || { echo "no peer listed its collections"; exit 1; }
+fi
 # shellcheck disable=SC2086
 python3 -I -B /tmp/replicas.py "$K/ro" "$K/pods" $COLLS --wait "$WAIT"
 EOS
