@@ -186,14 +186,14 @@ class EndpointsTest(StandTest):
         self.patch(OLLAMA_URL=closed_port_url())
         r = self.client.get("/search", params={"q": "governing law"})
         self.assertEqual(r.status_code, 503)
-        self.assertEqual(r.json()["error"], "векторизатор недоступен")
+        self.assertEqual(r.json()["error"], "embedder unavailable")
         self.assertEqual(self.qdrant.requests, [])
 
     def test_database_down(self):
         self.patch(QDRANT_URL=closed_port_url())
         r = self.client.get("/search", params={"q": "governing law"})
         self.assertEqual(r.status_code, 503)
-        self.assertEqual(r.json(), {"error": "база недоступна", "served_by": {"node": "machine-2", "pod": "search-abc"}})
+        self.assertEqual(r.json(), {"error": "vector database unavailable", "served_by": {"node": "machine-2", "pod": "search-abc"}})
 
     def test_readyz(self):
         self.assertEqual(self.client.get("/readyz").json(), {"ready": True})
@@ -260,11 +260,11 @@ class AnswerEndpointTest(StandTest):
 
     def test_model_failures(self):
         r = self.ask("this is not json")
-        self.assertEqual((r.status_code, r.json()["error"]), (502, "модель ответила не по формату"))
+        self.assertEqual((r.status_code, r.json()["error"]), (502, "model reply is not in the expected format"))
         r = self.ask(chat_status=429)
-        self.assertEqual((r.status_code, r.json()["error"]), (429, "модель занята, повторите позже"))
+        self.assertEqual((r.status_code, r.json()["error"]), (429, "model is busy, try again later"))
         r = self.ask(chat_status=500)
-        self.assertEqual((r.status_code, r.json()["error"]), (503, "модель недоступна"))
+        self.assertEqual((r.status_code, r.json()["error"]), (503, "model unavailable"))
 
     def test_no_hits_no_model_call(self):
         self.qdrant.handler = qdrant_handler([])

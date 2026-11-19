@@ -1,6 +1,6 @@
 """Сервис поиска: вопрос -> куски документов с адресом источника, по желанию ответ модели.
 
-Вопрос векторизует Ollama (bge-m3) на Маке, поиск идёт в Qdrant ключом ТОЛЬКО НА ЧТЕНИЕ:
+Вопрос векторизует Ollama на Маке (через фильтр), поиск идёт в Qdrant ключом ТОЛЬКО НА ЧТЕНИЕ:
 админского ключа у сервиса нет. Ответ своими словами пишет qwen3:8b через тот же фильтр на Маке,
 со ссылками на найденные куски (app/answer.py). Наружу только /search, /answer, /healthz и /readyz,
 документации API нет. Внешних зависимостей, кроме FastAPI и uvicorn, нет: к Qdrant и Ollama ходим
@@ -12,12 +12,24 @@
 уходит на случайный пир. Мёртвый пир молчит, поэтому соединение ждём недолго
 (QDRANT_CONNECT_TIMEOUT) и повторяем: следующая попытка почти всегда попадает на живой пир.
 Поиск без побочных эффектов, повтор безопасен.
+
+Пара (коллекция, модель вопроса). Без SEARCH_ALIAS это COLLECTION и EMBED_MODEL, как раньше.
+С SEARCH_ALIAS (например contracts) фоновый поток раз в ALIAS_TTL секунд смотрит, куда указывает
+алиас, и берёт новую пару только после проверки по реестру «коллекция → модель» (REGISTRY_COLLECTION):
+модель берётся из реестра, отпечаток должен сойтись. Отпечаток это настоящий кусок самой коллекции:
+реестр хранит его id и текст, сервис читает вектор куска из коллекции, считает вектор того же текста
+моделью из реестра и сравнивает (косинус не ниже FINGERPRINT_MIN). Так проверяются сами векторы
+коллекции, а не подпись. Не сошлось — отказ: отвечаем прежней парой, отказ виден в /readyz и в поле
+model_check ответа и пишется в журнал (app/binding.py). Запрос берёт пару один раз и ищет по имени
+настоящей коллекции, а не алиаса: модель вопроса и коллекция всегда из одной пары.
 """
 from __future__ import annotations
 
 import http.client
 import json
 import os
+import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -27,7 +39,9 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from app import answer as answering
+from app import binding
 from app import bm25
+from app import embed_models
 from app import metrics
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant.qdrant.svc.cluster.local:6333").rstrip("/")
@@ -36,7 +50,14 @@ COLLECTION = os.environ.get("COLLECTION", "lbr_v2_naive500_title")  # лучша
 SEARCH_MODE = os.environ.get("SEARCH_MODE", "dense")  # dense | hybrid (dense + BM25, RRF в Qdrant)
 PREFETCH = int(os.environ.get("PREFETCH", "100"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://192.168.105.1:11434").rstrip("/")  # фильтр на Маке
-MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
+MODEL = os.environ.get("EMBED_MODEL", "bge-m3")  # модель вопроса для COLLECTION
+SEARCH_ALIAS = os.environ.get("SEARCH_ALIAS", "")  # пусто: пара COLLECTION + EMBED_MODEL без смены
+REGISTRY = os.environ.get("REGISTRY_COLLECTION", "embedding_registry")
+ALIAS_TTL = float(os.environ.get("ALIAS_TTL", "1"))           # как часто смотреть, куда указывает алиас
+MODEL_RECHECK = float(os.environ.get("MODEL_RECHECK", "5"))   # отказанную цель проверяем снова не чаще
+FINGERPRINT_MIN = float(os.environ.get("FINGERPRINT_MIN", "0.99"))
+VERIFY_TIMEOUT = float(os.environ.get("VERIFY_TIMEOUT", "30"))  # проверка в фоне: модель может загружаться
+BACKGROUND = True  # фоновый поток алиаса; тесты выключают и зовут refresh сами
 ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "qwen3:8b")
 # генерация идёт секунды; фильтр на Маке ждёт модель 120 с, сервис чуть дольше, вход HAProxy ещё дольше
 ANSWER_TIMEOUT = float(os.environ.get("ANSWER_TIMEOUT", "130"))
@@ -69,7 +90,9 @@ def _call(url: str, body: dict | None = None, headers: dict | None = None, timeo
 
 
 class QdrantError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class Unavailable(Exception):
@@ -93,7 +116,7 @@ def _qdrant(path: str, body: dict | None = None) -> tuple[dict, int]:
             payload = r.read()
             if r.status < 500:
                 if r.status >= 400:  # 4xx: ошибка запроса или ключа, повтор не поможет
-                    raise QdrantError(f"qdrant {r.status}")
+                    raise QdrantError(f"qdrant {r.status}", r.status)
                 return json.loads(payload), attempt
         except QdrantError:
             raise
@@ -101,7 +124,94 @@ def _qdrant(path: str, body: dict | None = None) -> tuple[dict, int]:
             pass  # пир молчит или оборвал соединение: пробуем снова
         finally:
             conn.close()
-    raise QdrantError("все попытки к Qdrant неудачны")
+    raise QdrantError("qdrant: all attempts failed")  # текст может уйти клиенту в model_check.reason
+
+
+def log(event: str, **fields) -> None:
+    """Журнал сервиса: строка JSON в stderr (kubectl logs). Пишет только смену пары и отказы."""
+    rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": event, "pod": POD, **fields}
+    print(json.dumps(rec, ensure_ascii=False), file=sys.stderr, flush=True)
+
+
+def _embed(model: str, texts: list[str], timeout: float | None = None) -> list[list[float]]:
+    return _call(f"{OLLAMA_URL}/api/embed", {"model": model, "input": texts}, timeout=timeout)["embeddings"]
+
+
+# --- пара (коллекция, модель) и алиас ----------------------------------------------------------
+def _resolve_alias() -> str | None:
+    """Куда указывает SEARCH_ALIAS (GET /aliases, ключ на чтение); None, если такого алиаса нет."""
+    for a in _qdrant("/aliases")[0]["result"]["aliases"]:
+        if a.get("alias_name") == SEARCH_ALIAS:
+            return a.get("collection_name")
+    return None
+
+
+def _verify(collection: str) -> binding.Pair:
+    """Проверка цели: модель из реестра, вектор куска-пробы из самой коллекции против вектора
+    того же текста, посчитанного этой моделью сейчас. Отказ: binding.Refused с причиной."""
+    try:
+        found = _qdrant(f"/collections/{REGISTRY}/points", {
+            "ids": [binding.registry_id(collection)], "with_payload": True, "with_vector": False})[0]["result"]
+    except QdrantError as e:
+        if e.status == 404:
+            raise binding.Refused(f"registry {REGISTRY} not found") from None
+        raise
+    entry = (found[0].get("payload") or {}) if found else {}
+    if not found or entry.get("collection") != collection:
+        raise binding.Refused(f"{collection} is not in the registry")
+    model, probe_id, probe_text = entry.get("model"), entry.get("probe_id"), entry.get("probe_text")
+    if not (isinstance(model, str) and model and isinstance(probe_id, (str, int))
+            and isinstance(probe_text, str) and probe_text):
+        raise binding.Refused(f"registry entry for {collection} is incomplete")
+    try:
+        points = _qdrant(f"/collections/{collection}/points", {
+            "ids": [probe_id], "with_payload": False, "with_vector": ["dense"]})[0]["result"]
+    except QdrantError as e:
+        if e.status == 404:
+            raise binding.Refused(f"collection {collection} not found", model) from None
+        raise
+    stored = ((points[0].get("vector") or {}).get("dense")) if points else None
+    if not stored:
+        raise binding.Refused("fingerprint point is missing from the collection", model)
+    try:
+        fresh = _embed(model, [probe_text], timeout=VERIFY_TIMEOUT)[0]
+    except urllib.error.HTTPError as e:
+        e.close()
+        if e.code == 403:  # фильтр Ollama не знает такой модели: вопросы ею тоже не посчитать
+            raise binding.Refused(f"embedder does not allow model {model}", model) from None
+        raise
+    if len(fresh) != len(stored):
+        raise binding.Refused(f"dimension mismatch: {model} gives {len(fresh)}, collection stores {len(stored)}", model)
+    cos = binding.cosine(fresh, stored)
+    if cos < FINGERPRINT_MIN:
+        raise binding.Refused(f"fingerprint mismatch: cosine {cos:.3f} < {FINGERPRINT_MIN}", model)
+    return binding.Pair(collection, model, verified=True, cosine=round(cos, 4))
+
+
+BINDING: binding.Binding | None = None
+_BINDING_LOCK = threading.Lock()
+
+
+def _binding() -> binding.Binding:
+    """Состояние пары по алиасу; создаётся при первом обращении, тогда же стартует фоновый поток."""
+    global BINDING
+    if BINDING is None:
+        with _BINDING_LOCK:
+            if BINDING is None:
+                BINDING = binding.Binding(SEARCH_ALIAS, COLLECTION, MODEL, resolve=_resolve_alias, verify=_verify,
+                                          ttl=ALIAS_TTL, recheck=MODEL_RECHECK, log=log)
+    if BACKGROUND:
+        BINDING.ensure_running()
+    return BINDING
+
+
+def _serving() -> tuple[binding.Pair, dict | None]:
+    """Пара для этого запроса (снимок) и состояние проверки для поля model_check (без алиаса None)."""
+    if not SEARCH_ALIAS:
+        return binding.Pair(COLLECTION, MODEL), None
+    b = _binding()
+    st = b.state
+    return st.pair, b.view(st)
 
 
 @app.middleware("http")
@@ -130,12 +240,25 @@ def metrics_text() -> Response:
 
 @app.get("/readyz")
 def readyz() -> JSONResponse:
-    try:
-        status = _qdrant(f"/collections/{COLLECTION}")[0]["result"]["status"]
-        ready = status in ("green", "yellow")
-    except Exception:
-        ready = False
-    return JSONResponse({"ready": ready}, status_code=200 if ready else 503)
+    """Готов, если коллекция текущей пары жива. С алиасом ещё и после первого чтения алиаса: до него
+    под не знает, какой парой отвечать. Отказ цели алиаса готовность не снимает: под отвечает прежней
+    проверенной парой, а отказ виден в теле (model_check)."""
+    if SEARCH_ALIAS:
+        b = _binding()
+        st = b.state
+        pair, check, ready = st.pair, b.view(st), st.resolved
+    else:
+        pair, check, ready = binding.Pair(COLLECTION, MODEL), None, True
+    if ready:
+        try:
+            status = _qdrant(f"/collections/{pair.collection}")[0]["result"]["status"]
+            ready = status in ("green", "yellow")
+        except Exception:
+            ready = False
+    body: dict = {"ready": ready}
+    if check is not None:
+        body.update(collection=pair.collection, model=pair.model, model_check=check)
+    return JSONResponse(body, status_code=200 if ready else 503)
 
 
 def _ms(seconds: float) -> float:
@@ -151,13 +274,15 @@ def _route(attempts: int) -> str:
     return "local" if QDRANT_LOCAL_URL and attempts == 1 else "cluster"
 
 
-def _retrieve(q: str, k: int) -> tuple[list[dict], dict, int]:
-    """Вопрос -> (куски с адресами, время по шагам в мс, номер удачной попытки к Qdrant)."""
+def _retrieve(q: str, k: int, pair: binding.Pair | None = None) -> tuple[list[dict], dict, int]:
+    """Вопрос -> (куски с адресами, время по шагам в мс, номер удачной попытки к Qdrant).
+    Модель вопроса и коллекция из одной пары; без пары берётся текущая."""
+    pair = pair or _serving()[0]
     t0 = time.perf_counter()
     try:
-        vector = _call(f"{OLLAMA_URL}/api/embed", {"model": MODEL, "input": [q]})["embeddings"][0]
+        vector = _embed(pair.model, [embed_models.query_text(pair.model, q)])[0]
     except Exception:
-        raise Unavailable("векторизатор недоступен")
+        raise Unavailable("embedder unavailable")
     t1 = time.perf_counter()
     METRICS.observe("search_stage_seconds", {"stage": "embed"}, t1 - t0)
     if SEARCH_MODE == "hybrid":
@@ -167,10 +292,10 @@ def _retrieve(q: str, k: int) -> tuple[list[dict], dict, int]:
     else:
         body = {"query": vector, "using": "dense", "limit": k, "with_payload": PAYLOAD}
     try:
-        result, attempts = _qdrant(f"/collections/{COLLECTION}/points/query", body)
+        result, attempts = _qdrant(f"/collections/{pair.collection}/points/query", body)
         points = result["result"]["points"]
     except Exception:
-        raise Unavailable("база недоступна")
+        raise Unavailable("vector database unavailable")
     t2 = time.perf_counter()
     METRICS.observe("search_stage_seconds", {"stage": "qdrant"}, t2 - t1)
     if attempts > 1:
@@ -192,25 +317,30 @@ def _error(message: str, status: int = 503) -> JSONResponse:
 
 @app.get("/search")
 def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1, le=20)):
+    pair, check = _serving()
     try:
-        hits, timing, attempts = _retrieve(q, k)
+        hits, timing, attempts = _retrieve(q, k, pair)
     except Unavailable as e:
         return _error(str(e))
-    return {
-        "query": q, "model": MODEL, "collection": COLLECTION, "mode": SEARCH_MODE,
+    out = {
+        "query": q, "model": pair.model, "collection": pair.collection, "mode": SEARCH_MODE,
         "timing_ms": timing,
         "qdrant_attempts": attempts,
         "qdrant_route": _route(attempts),
         "served_by": _served_by(),
         "results": hits,
     }
+    if check is not None:
+        out["model_check"] = check
+    return out
 
 
 @app.get("/answer")
 def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1, le=ANSWER_MAX_K)):
     """Ответ своими словами по найденным кускам, со ссылками и проверенными цитатами."""
+    pair, check = _serving()
     try:
-        hits, timing, attempts = _retrieve(q, k)
+        hits, timing, attempts = _retrieve(q, k, pair)
     except Unavailable as e:
         METRICS.inc("search_answer_total", {"result": "error"})
         return _error(str(e))
@@ -223,11 +353,11 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
             e.close()
             METRICS.inc("search_answer_total", {"result": "error"})
             if e.code == 429:  # фильтр пускает к модели один запрос за раз
-                return _error("модель занята, повторите позже", 429)
-            return _error("модель недоступна")
+                return _error("model is busy, try again later", 429)
+            return _error("model unavailable")
         except Exception:
             METRICS.inc("search_answer_total", {"result": "error"})
-            return _error("модель недоступна")
+            return _error("model unavailable")
         METRICS.observe("search_stage_seconds", {"stage": "generate"}, time.perf_counter() - t0)
         timing["generate"] = _ms(time.perf_counter() - t0)
         tokens = {"prompt": reply.get("prompt_eval_count"), "output": reply.get("eval_count")}
@@ -236,11 +366,11 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
         checked = {"status": "refused", "answer": answering.refusal(q), "citations": []}
     if checked["status"] == "invalid":
         METRICS.inc("search_answer_total", {"result": "error"})
-        return _error("модель ответила не по формату", 502)
+        return _error("model reply is not in the expected format", 502)
     METRICS.inc("search_answer_total", {"result": checked["status"]})
     checked.pop("model_answer", None)  # неподтверждённый ответ модели наружу не отдаём
-    return {
-        "query": q, "model": ANSWER_MODEL, "collection": COLLECTION,
+    out = {
+        "query": q, "model": ANSWER_MODEL, "embed_model": pair.model, "collection": pair.collection,
         **checked,
         "sources": hits,
         "timing_ms": timing,
@@ -249,3 +379,6 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
         "qdrant_route": _route(attempts),
         "served_by": _served_by(),
     }
+    if check is not None:
+        out["model_check"] = check
+    return out

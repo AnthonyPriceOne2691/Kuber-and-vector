@@ -11,7 +11,7 @@
 #     falco/falco-panel-output (deploy/falco/values.yaml монтирует его в Falco).
 # Нужны вход (deploy/observer/install.sh), шлюз Qdrant (deploy/qdrant/gate-install.sh), Falco.
 #   deploy/panel/install.sh [machine-4]
-#   NODES="machine-1 machine-2 machine-3", KC=machine-1 (где kubectl), TOKEN_TTL=24h, COLLECTION=contracts_rf2
+#   NODES="machine-1 machine-2 machine-3", KC=machine-1 (где kubectl), TOKEN_TTL=24h, COLLECTION=contracts (алиас поиска)
 # Повторный запуск безопасен: код и адреса обновляются, токен Kubernetes выпускается новый, а прежний
 # сразу перестаёт действовать (учётная запись пересоздаётся с новым UID). Токен событий остаётся.
 # Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
@@ -22,7 +22,7 @@ VM="${1:-machine-4}"
 NODES="${NODES:-machine-1 machine-2 machine-3}"
 KC="${KC:-machine-1}"
 TOKEN_TTL="${TOKEN_TTL:-24h}"
-COLLECTION="${COLLECTION:-contracts_rf2}"
+COLLECTION="${COLLECTION:-contracts}"  # алиас поиска: панель показывает, куда он указывает сейчас
 PORT=8090
 case "$COLLECTION" in ""|*[!A-Za-z0-9_-]*) echo "COLLECTION: только латиница, цифры, _ и -"; exit 1 ;; esac
 case "$TOKEN_TTL" in ""|*[!0-9hms]*) echo "TOKEN_TTL: срок вида 24h или 90m"; exit 1 ;; esac

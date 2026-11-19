@@ -67,6 +67,15 @@ class IngestTest(unittest.TestCase):
         self.assertEqual(e["pod"], "search-7f9c6d8b5-dfzb8")
         self.assertAlmostEqual(e["ts"], parse_time("2026-11-18T10:12:01.123456Z"), places=3)
         self.assertIn("shell was spawned", e["detail"])
+        # время и важность из начала output в ленте не повторяются: у события свои поля ts и level
+        self.assertTrue(e["detail"].startswith("A shell was spawned"), e["detail"])
+
+    def test_falco_output_head_variants(self):
+        ev = EventsSource(dedupe_s=0)
+        iso = dict(FALCO, output="2026-11-18T10:12:01.123456789+0000: Critical Qdrant key read (pod=x)", rule="r1")
+        self.assertEqual(ev.ingest(iso, now=parse_time("2026-11-18T10:12:02Z"))["detail"], "Qdrant key read (pod=x)")
+        plain = dict(FALCO, output="no time prefix here: Warning stays as is", rule="r2")
+        self.assertEqual(ev.ingest(plain, now=parse_time("2026-11-18T10:12:02Z"))["detail"], "no time prefix here: Warning stays as is")
 
     def test_falco_priorities(self):
         ev = EventsSource(dedupe_s=0)

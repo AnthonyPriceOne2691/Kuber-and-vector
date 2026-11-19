@@ -272,8 +272,15 @@ def parse_pod(item: dict) -> dict:
     }
 
 
+# Служебные поды внутри наших пространств: в карточке машины идут в «+N system», как поды kube-system.
+# Шлюз Qdrant (deploy/qdrant/gate.yaml) живёт в qdrant, по поду на машину; в строках карточки он
+# занимал третье место и в кадре обрезал строку пода поиска (снимок 19.11), а сюжет ролика про Qdrant и поиск.
+INFRA_APPS = ("qdrant-gate",)
+
+
 def parse_kube(doc: dict, namespaces=("search", "qdrant")) -> dict:
-    """Ответ `kubectl get nodes,pods -A -o json` -> узлы и поды. Поды вне namespaces — системные."""
+    """Ответ `kubectl get nodes,pods -A -o json` -> узлы и поды. Поды вне namespaces и служебные
+    (INFRA_APPS) — системные."""
     if not isinstance(doc, dict) or not isinstance(doc.get("items"), list):
         raise ValueError("unexpected kubectl output")
     nodes, pods = [], []
@@ -283,7 +290,7 @@ def parse_kube(doc: dict, namespaces=("search", "qdrant")) -> dict:
             nodes.append(parse_node(item))
         elif kind == "Pod":
             p = parse_pod(item)
-            p["system"] = p["namespace"] not in namespaces
+            p["system"] = p["namespace"] not in namespaces or p["app"] in INFRA_APPS
             pods.append(p)
     nodes.sort(key=lambda n: n["name"] or "")
     pods.sort(key=lambda p: (p["namespace"] or "", p["name"] or ""))
@@ -795,6 +802,12 @@ class RateLimited(Exception):
     pass
 
 
+# Начало строки output у Falco: «17:37:38.594445143: Warning …» или ISO-время. Время и уровень лента
+# показывает своими полями, а сырой префикс в кадре читался как мусор (снимок панели 19.11).
+FALCO_OUTPUT_HEAD = re.compile(
+    r"^\S+: (?:Emergency|Alert|Critical|Error|Warning|Notice|Informational|Info|Debug) ")
+
+
 class EventsSource:
     """Лента событий: выведенные панелью (переходы узлов, поды, реплики, нагрузка) и внешние
     (POST /api/event: алерты Falco, «ответчик» с карантином пода). Одинаковые события за
@@ -859,6 +872,8 @@ class EventsSource:
             fields = payload.get("output_fields") if isinstance(payload.get("output_fields"), dict) else {}
             title = payload.get("rule") or "Falco alert"
             detail = payload.get("output")
+            if isinstance(detail, str):  # Falco ставит в начало время и важность: в ленте они уже есть
+                detail = FALCO_OUTPUT_HEAD.sub("", detail, count=1)
             level = FALCO_LEVELS.get(str(payload.get("priority") or "").lower(), "warn")
             machine = payload.get("hostname")
             pod = fields.get("k8s.pod.name")

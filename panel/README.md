@@ -151,7 +151,10 @@ python3 -I -B /opt/stand-panel/aggregator.py --bind 127.0.0.1 --port 8090 \
 - **qdrant.** Каждый пир — `GET /cluster` и `GET /collections/{c}/cluster` (заголовок `api-key`, ключ
   читается из файла и перечитывается при замене файла; в журналы и в состояние не попадает), пиры
   опрашиваются параллельно. Алиас коллекции разрешается через `GET /aliases`, на панели видно «alias →
-  collection» (сцена со сменой модели). Номер пира → машина: `--qdrant-peer` > под Kubernetes по адресу
+  collection (model)» (сцена со сменой модели, `deploy/scenes/model-switch.sh`): модель берётся из ответов
+  поиска за 10 с (`load.serving`); если алиас указывает на коллекцию, которой никто не отвечает (сервис
+  отверг её по отпечатку), вместо модели «not serving». Чтобы панель шла за алиасом, на стенде её ставят с
+  `COLLECTION=contracts deploy/panel/install.sh`. Номер пира → машина: `--qdrant-peer` > под Kubernetes по адресу
   пира (`qdrant-1.qdrant-headless` → под `qdrant-1` → его узел; или IP пода) > машина у `--qdrant`.
   Адреса нужны **по пиру** (Service на под через селектор `statefulset.kubernetes.io/pod-name`, или NodePort
   с `externalTrafficPolicy: Local`): через общий балансирующий Service доступность отдельного пира видна

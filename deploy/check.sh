@@ -85,6 +85,16 @@ check "токена API нет ни в одном поде вне kube-system (C
 
 echo "поиск через вход https://$ENTRY"
 check "TLS проверяется по УЦ стенда, ответ с адресами" bash -c "curl -sf --cacert '$CA' -H @'$KEYH' 'https://$ENTRY/search?q=$Q&k=3' | $PY -I -c 'import json,sys; r=json.load(sys.stdin)[\"results\"]; assert r and all(\"span\" in x for x in r)'"
+# Пара «коллекция, модель» за алиасом contracts (app/binding.py): поиск отвечает проверенной парой,
+# а алиас указывает туда же, откуда пришёл ответ. Решает текст ответа, код curl отдельно.
+pair_verified() {
+  local out
+  out="$(curl -sf --cacert "$CA" -H @"$KEYH" "https://$ENTRY/search?q=$Q&k=1")" || return 1
+  $PY -I -c 'import json, sys
+r = json.loads(sys.argv[1]); c = r.get("model_check") or {}
+sys.exit(0 if c.get("status") == "verified" and c.get("target") == r.get("collection") else 1)' "$out"
+}
+check "поиск отвечает проверенной парой «коллекция, модель» за алиасом contracts" pair_verified
 check "без УЦ стенда curl отказывается (сертификат не публичный)" not curl -sf "https://$ENTRY/healthz"
 check "POST запрещён (405)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' -X POST 'https://$ENTRY/search') = 405 ]"
 check "чужой путь закрыт (404)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' 'https://$ENTRY/docs') = 404 ]"
@@ -130,6 +140,8 @@ check "Мак по сети машин закрыт, кроме фильтра (
 check "фильтр пускает только векторизацию (/api/tags → 403)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/tags) = 403 ]"
 check "фильтр отдаёт векторы bge-m3" bash -c "limactl shell machine-1 curl -sf -m 10 http://192.168.105.1:11434/api/embed -d '{\"model\":\"bge-m3\",\"input\":\"test\"}' | grep -q embeddings"
 check "фильтр не даёт чат с чужой моделью (403)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/chat -d '{\"model\":\"qwen3:14b\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}') = 403 ]"
+check "фильтр отдаёт векторы snowflake-arctic-embed2 (вторая модель, сцена смены модели)" bash -c "limactl shell machine-1 curl -sf -m 20 http://192.168.105.1:11434/api/embed -d '{\"model\":\"snowflake-arctic-embed2\",\"input\":\"query: test\"}' | grep -q embeddings"
+check "фильтр не даёт векторы чужой модели (403)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/embed -d '{\"model\":\"nomic-embed-text\",\"input\":\"test\"}') = 403 ]"
 check "фильтр не даёт держать модель в памяти (keep_alive → 400)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/chat -d '{\"model\":\"qwen3:8b\",\"keep_alive\":-1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}') = 400 ]"
 check "IPv6 выключен" bash -c "[ \$(limactl shell machine-1 cat /proc/sys/net/ipv6/conf/all/disable_ipv6) = 1 ]"
 check "папок Мака в машине нет" not limactl shell machine-1 test -d /Users
