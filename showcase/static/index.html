@@ -573,8 +573,9 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     box.hidden = false;
     $("#quality-title").textContent = [q.title, q.benchmark].filter(Boolean).join(" · ");
     $("#quality-sub").textContent = [q.metric, q.search].filter(Boolean).join(" · ");
+    const lead = q.rows.find((r) => r.id === "ours") || q.rows[0];  // выделяем наш метод, где бы он ни стоял
     const rows = q.rows.map((row, i) => {
-      const el = h("div", "q-row" + (i ? " alt" : ""));
+      const el = h("div", "q-row" + (row === lead ? "" : " alt"));
       el.id = `quality-${row.id || i + 1}`;
       const val = row.value == null ? h("span", "q-val pending", "pending") : h("span", "q-val", row.value + (row.unit === "%" ? "%" : row.unit ? " " + row.unit : ""));
       const track = h("span", "q-track"), fill = h("i");

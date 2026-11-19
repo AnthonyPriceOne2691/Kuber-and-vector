@@ -29,7 +29,7 @@
         "value": 63.5
       }
     ],
-    "caveat": "Same 776 questions and the same bge-m3 model, only the chunking differs. The method adds 31 points."
+    "caveat": "Same 776 questions and bge-m3 model. The method adds 31 points."
   },
   "tiles": [
     {
@@ -73,7 +73,11 @@
       "facts": [
         {
           "label": "requests",
-          "value": 1586
+          "value": 1575
+        },
+        {
+          "label": "retried",
+          "value": 2
         }
       ]
     },

@@ -219,7 +219,7 @@ class NumbersTest(unittest.TestCase):
         t = self.tiles["one-machine-off"]
         self.assertEqual((t["state"], t["value"]), ("measured", "0"))
         self.assertEqual(facts("one-machine-off"), [("", "3,462", ""), ("", "1", ""), ("", "22", "s"), ("", "53", "s")])
-        self.assertEqual((self.tiles["two-machines-off"]["value"], facts("two-machines-off")), ("0", [("", "1,586", "")]))
+        self.assertEqual((self.tiles["two-machines-off"]["value"], facts("two-machines-off")), ("0", [("", "1,575", ""), ("", "2", "")]))
         self.assertEqual((self.tiles["writes-during-failure"]["value"], facts("writes-during-failure")),
                          ("0", [("", "1,489", "")]))
         pod = self.tiles["infected-pod"]
