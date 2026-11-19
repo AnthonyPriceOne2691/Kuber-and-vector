@@ -23,6 +23,9 @@ step "машины"
 step "фильтр Ollama на Маке"
 "$HERE/host/filter.sh" start
 
+step "файрвол на входе машин: соседям и входу свои порты, остальное в отбой"
+"$HERE/vm/ingress.sh"
+
 step "k3s: machine-1 поднимает etcd, остальные присоединяются по одной"
 k3s_ready machine-1 || "$HERE/k3s/install-server.sh" machine-1 init
 for m in machine-2 machine-3; do k3s_ready "$m" || "$HERE/k3s/install-server.sh" "$m" join machine-1; done
@@ -38,6 +41,9 @@ kc -n kube-system rollout status deploy/coredns --timeout=120s
 
 step "k3s: быстрее признавать выключенную машину мёртвой"
 "$HERE/k3s/failover-tuning.sh"
+
+step "DNS кластера без выхода наружу"
+"$HERE/k3s/coredns-local.sh" machine-1
 
 step "Qdrant"
 "$HERE/qdrant/install.sh" machine-1
@@ -60,6 +66,9 @@ step "шлюз Qdrant для мониторинга и панели"
 
 step "мониторинг на machine-4"
 "$HERE/monitoring/install.sh" machine-4
+
+step "образы только из комплекта (политика допуска, последней: все поды уже стоят)"
+"$HERE/k3s/image-policy.sh" machine-1
 
 step "проверка"
 "$HERE/check.sh"

@@ -1,0 +1,49 @@
+# Образы только из комплекта стенда. Встроенная ValidatingAdmissionPolicy (без вебхуков и без
+# лишней памяти): имя образа из списка и imagePullPolicy Never. Кластер ничего не скачивает,
+# образы попадают на машины файлами с проверенной суммой (kit/), поэтому под с чужим образом
+# или с попыткой скачать образ сервер API отклоняет ещё до запуска.
+# Системные поды k3s (kube-system) живут по своим правилам и под политику не попадают.
+# Ставит deploy/k3s/image-policy.sh: он подставляет список @ALLOWED@ и режим @ACTIONS@
+# (Deny, если все работающие поды уже по правилам, иначе Warn и Audit).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: stand-images
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - {key: kubernetes.io/metadata.name, operator: NotIn, values: [kube-system]}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers"]
+  variables:
+    - name: allowed
+      expression: "@ALLOWED@"
+    - name: containers
+      expression: "object.spec.containers + (has(object.spec.initContainers) ? object.spec.initContainers : [])"
+    - name: foreign
+      expression: "variables.containers.filter(c, !(c.image in variables.allowed)).map(c, c.image)"
+  validations:
+    - expression: "size(variables.foreign) == 0"
+      messageExpression: "'образ не из комплекта стенда: ' + variables.foreign.join(', ')"
+      reason: Forbidden
+    - expression: "variables.containers.all(c, c.imagePullPolicy == 'Never')"
+      message: "кластер образы не скачивает: imagePullPolicy только Never"
+      reason: Forbidden
+    - expression: >-
+        !has(object.spec.ephemeralContainers) ||
+        object.spec.ephemeralContainers.all(c, c.image in variables.allowed && c.imagePullPolicy == 'Never')
+      message: "отладочный контейнер тоже только из комплекта и без скачивания"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: stand-images
+spec:
+  policyName: stand-images
+  validationActions: @ACTIONS@

@@ -1,0 +1,19 @@
+# Фильтр входящих на сети машин (lima0), правила в /etc/stand/ingress.nft (deploy/vm/ingress.sh).
+# Встаёт на каждом старте до подъёма сети и до k3s, как nftables.service в Ubuntu.
+[Unit]
+Description=Stand ingress filter on lima0
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target k3s.service haproxy.service
+Conflicts=shutdown.target
+ConditionPathExists=/etc/stand/ingress.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/stand/ingress.nft
+ExecReload=/usr/sbin/nft -f /etc/stand/ingress.nft
+ExecStop=-/usr/sbin/nft delete table inet stand_ingress
+
+[Install]
+WantedBy=sysinit.target
