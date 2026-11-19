@@ -1,7 +1,7 @@
 """Загрузка кусков и векторов в Qdrant. Запускается внутри кластера (на машине стенда),
 только стандартная библиотека. Ключ админский, читается из файла, а не из аргументов.
 
-Векторы именованные: «dense» (bge-m3, косинус) и, если в точках есть BM25, разреженный «bm25»
+Векторы именованные: «dense» (модель набора, косинус) и, если в точках есть BM25, разреженный «bm25»
 с modifier idf: IDF считает Qdrant, частоту и длину документа считали при подготовке.
 Файлы читаются порциями: память загрузчика не растёт с размером корпуса (полный корпус это
 около 159 тыс. точек и 0,65 ГБ векторов, а у машины стенда всего 4 ГБ).
@@ -9,6 +9,8 @@
 Для замера предела (сколько влезает в машину):
     --quantization int8   скалярное квантование, сжатые векторы в памяти, в 4 раза меньше float32
     --on-disk             исходные векторы на диске, в памяти только то, что нужно поиску
+Для подложенной ошибки в сцене смены модели (deploy/scenes/model-switch.sh):
+    --limit N             только первые N кусков набора
 
     python3 -I qdrant_load.py --url http://IP:6333 --key-file KEY --dir naive500 --collection C
 """
@@ -32,20 +34,24 @@ def call(method: str, url: str, key: str, body: dict | None = None, timeout: int
         return json.load(r)
 
 
-def batches(directory: str, dim: int, size: int) -> Iterator[list[tuple[dict, array]]]:
+def batches(directory: str, dim: int, size: int, limit: int | None = None) -> Iterator[list[tuple[dict, array]]]:
     """Точки и их векторы порциями; points.jsonl и vectors.f32 идут в одном порядке."""
     with open(f"{directory}/points.jsonl", encoding="utf-8") as fp, open(f"{directory}/vectors.f32", "rb") as fv:
         batch: list[tuple[dict, array]] = []
+        n = 0
         for line in fp:
+            if limit is not None and n >= limit:
+                break
             vec = array("f")
             vec.fromfile(fv, dim)  # EOFError, если векторов меньше, чем точек
             batch.append((json.loads(line), vec))
+            n += 1
             if len(batch) == size:
                 yield batch
                 batch = []
         if batch:
             yield batch
-        if fv.read(1):
+        if limit is None and fv.read(1):
             raise ValueError("векторов больше, чем точек: файлы от разных прогонов")
 
 
@@ -81,6 +87,7 @@ def main() -> None:
     ap.add_argument("--replicas", type=int, default=1)
     ap.add_argument("--quantization", choices=("int8",), default=None)
     ap.add_argument("--on-disk", action="store_true")
+    ap.add_argument("--limit", type=int, default=None, help="только первые N кусков")
     ap.add_argument("--wait-green", type=int, default=900, help="сколько секунд ждать готовности индекса")
     args = ap.parse_args()
     with open(args.key_file) as f:
@@ -97,7 +104,7 @@ def main() -> None:
 
     t0 = time.perf_counter()
     loaded = 0
-    for batch in batches(args.dir, args.dim, args.batch):
+    for batch in batches(args.dir, args.dim, args.batch, args.limit):
         call("PUT", f"{base}/points?wait=true", key, {"points": [to_point(p, v) for p, v in batch]})
         loaded += len(batch)
     took = time.perf_counter() - t0

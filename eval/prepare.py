@@ -1,4 +1,4 @@
-"""На Маке: выборка LegalBench-RAG, нарезка, векторы bge-m3 через Ollama.
+"""На Маке: выборка LegalBench-RAG, нарезка, векторы через Ollama (по умолчанию bge-m3).
 
     python3 -I eval/prepare.py --check-only        только сверить мини-выборку со статьёй
     python3 -I eval/prepare.py                     мини: нарезать, посчитать векторы, записать файлы
@@ -12,6 +12,9 @@
     <стратегия>/points.jsonl   id, dataset, file, start, end, text (порядок = порядок векторов)
     <стратегия>/vectors.f32    float32 подряд
     queries.jsonl, query_vectors.f32, meta.json (замеры скорости)
+Вектор вопроса считается по тексту с префиксом модели (app/embed_models.py: у snowflake-arctic-embed2
+«query: », у bge-m3 без префикса), как его считает сервис поиска; кэш векторов по этому же тексту.
+Куски идут без префикса модели. Префикс записан в meta.json (query_prefix).
 Данные набора читаются как текст и JSON, код из них не исполняется.
 """
 from __future__ import annotations
@@ -33,6 +36,7 @@ sys.path.insert(0, str(ROOT))  # наш код; с -I папка скрипта 
 
 from app import bm25  # noqa: E402
 from app.chunking import STRATEGIES  # noqa: E402
+from app.embed_models import query_prefix, query_text  # noqa: E402
 from app.embedding import OllamaEmbedder  # noqa: E402
 from eval import legalbench as lb  # noqa: E402
 
@@ -74,6 +78,16 @@ def section_for(starts: list[int], titles: list[str], s: int, e: int) -> str:
 
 def title_of(file: str) -> str:
     return Path(file).stem.replace("_", " ").strip()
+
+
+def index_text(p: dict, variant: str) -> str:
+    """Текст куска, по которому считается его вектор (и BM25). Ветка «title»: к тексту приписаны
+    название документа и раздел. По этой же функции eval/fingerprint.py восстанавливает текст пробы
+    для реестра моделей, поэтому вектор пробы в коллекции и её текст в реестре всегда из одного места."""
+    prefix = ""
+    if variant == "title":
+        prefix = f"Document: {p['title']}\n" + (f"Section: {p['section']}\n" if p["section"] else "") + "\n"
+    return prefix + p["text"]
 
 
 def main() -> None:
@@ -146,10 +160,7 @@ def main() -> None:
                                    "file": f, "title": title_of(f), "section": section_for(starts, titles, s, e),
                                    "start": s, "end": e, "text": text[s:e]})
         for p in points:
-            prefix = ""
-            if variant == "title":
-                prefix = f"Document: {p['title']}\n" + (f"Section: {p['section']}\n" if p["section"] else "") + "\n"
-            p["index_text"] = prefix + p["text"]
+            p["index_text"] = index_text(p, variant)
         avgdl = sum(len(bm25.tokens(p["index_text"])) for p in points) / max(len(points), 1) if with_sparse else 0.0
         print(f"{strategy}: кусков {len(points)}")
         before_n, before_s = emb.computed, emb.seconds
@@ -161,11 +172,11 @@ def main() -> None:
         d.mkdir(exist_ok=True)
         with open(d / "points.jsonl", "w", encoding="utf-8") as fp, open(d / "vectors.f32", "wb") as fv:
             for p in points:
-                index_text = p.pop("index_text")
+                itext = p.pop("index_text")
                 if with_sparse:
-                    p["sparse"] = bm25.doc_sparse(index_text, avgdl)
+                    p["sparse"] = bm25.doc_sparse(itext, avgdl)
                 fp.write(json.dumps(p, ensure_ascii=False) + "\n")
-                emb.vector(index_text).tofile(fv)
+                emb.vector(itext).tofile(fv)
         meta["strategies"][strategy] = {
             "chunks": len(points), "new_vectors": new_n, "embed_seconds": round(new_s, 1),
             "wall_seconds": round(wall, 1), "chunks_per_second": round(new_n / new_s, 1) if new_s else None}
@@ -175,12 +186,13 @@ def main() -> None:
     queries = [{"dataset": n, "query": t["query"], "sparse": bm25.query_sparse(t["query"]),
                 "snippets": [[s["file_path"], s["span"][0], s["span"][1]] for s in t["snippets"]]}
                for n in lb.DATASETS for t in selected[n]]
-    emb.ensure([q["query"] for q in queries], progress=False)
+    emb.ensure([query_text(args.model, q["query"]) for q in queries], progress=False)
     with open(out / "queries.jsonl", "w", encoding="utf-8") as fq, open(out / "query_vectors.f32", "wb") as fv:
         for q in queries:
             fq.write(json.dumps(q, ensure_ascii=False) + "\n")
-            emb.vector(q["query"]).tofile(fv)
+            emb.vector(query_text(args.model, q["query"])).tofile(fv)
     meta["queries"] = len(queries)
+    meta["query_prefix"] = query_prefix(args.model)
     meta["dim"] = emb.dim
     emb.close()
     with open(out / "meta.json", "w") as f:

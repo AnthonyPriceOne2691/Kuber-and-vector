@@ -1,11 +1,11 @@
-"""Фильтр перед Ollama на Маке: из сети стенда видны ровно два вызова, векторизация bge-m3
-и чат модели ответа qwen3:8b.
+"""Фильтр перед Ollama на Маке: из сети стенда видны ровно два вызова, векторизация двумя моделями
+векторов (bge-m3 и snowflake-arctic-embed2, вторая для сцены смены модели) и чат модели ответа qwen3:8b.
 
 Зачем: у API Ollama нет аутентификации (в 2026 у него были CVE-2026-7482 и CVE-2026-5757),
 а «заражённый под» поиска — как раз тот, кому к Ollama можно. Поэтому:
 - слушаем только адрес моста socket_vmnet (192.168.105.1), а не все интерфейсы:
   из домашней сети фильтр не виден;
-- пропускаем только POST /api/embed с моделью bge-m3 и POST /api/chat с моделью qwen3:8b,
+- пропускаем только POST /api/embed с моделью из EMBED_MODELS и POST /api/chat с моделью qwen3:8b,
   с лимитами на размер тела, число и длину текстов; наверх уходят только разрешённые поля;
 - чат держит память и видеоядро Мака, поэтому его фильтр ограничивает строже: контекст модели
   фиксирован (num_ctx), длина ответа ограничена, keep_alive, инструменты и картинки запрещены,
@@ -26,7 +26,7 @@ import threading
 import time
 import urllib.request
 
-MODEL = "bge-m3"
+EMBED_MODELS = ("bge-m3", "snowflake-arctic-embed2")  # «имя:latest» в Ollama та же модель
 MAX_BODY = 256 * 1024
 MAX_INPUTS = 64
 MAX_CHARS = 8000
@@ -45,6 +45,14 @@ CHAT_OPTIONS = {  # имя: (тип, минимум, максимум); num_ctx 
     "seed": (int, 0, 2**31 - 1), "num_predict": (int, 1, CHAT_MAX_PREDICT), "num_ctx": (int, 1, 1 << 20),
 }
 CHAT_SLOT = threading.BoundedSemaphore(1)
+
+
+def embed_model(name: object) -> str | None:
+    """Разрешённая модель векторов без тега «:latest» или None."""
+    if not isinstance(name, str):
+        return None
+    name = name[:-len(":latest")] if name.endswith(":latest") else name
+    return name if name in EMBED_MODELS else None
 
 
 def log(event: str, **kw) -> None:
@@ -112,15 +120,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = self._json_body(MAX_BODY)
         if body is None:
             return
-        if body.get("model") != MODEL:
-            return self._deny(403, f"разрешена только модель {MODEL}")
+        model = embed_model(body.get("model"))
+        if model is None:
+            return self._deny(403, f"разрешены только модели {', '.join(EMBED_MODELS)}")
         inputs = body.get("input")
         if isinstance(inputs, str):
             inputs = [inputs]
         if (not isinstance(inputs, list) or not inputs or len(inputs) > MAX_INPUTS
                 or not all(isinstance(t, str) and 0 < len(t) <= MAX_CHARS for t in inputs)):
             return self._deny(400, "input: от 1 до 64 строк длиной до 8000 знаков")
-        data = self._upstream("/api/embed", {"model": MODEL, "input": inputs, "truncate": True}, 30)
+        data = self._upstream("/api/embed", {"model": model, "input": inputs, "truncate": True}, 30)
         if data is None:
             return self._reply(502, json.dumps({"error": "векторизатор недоступен"}).encode())
         self._reply(200, data)
@@ -207,7 +216,7 @@ def main() -> None:
             if time.time() > deadline:
                 sys.exit(f"не удалось занять {args.listen}:{args.port}: {e}")
             time.sleep(2)
-    log("listening", address=f"{args.listen}:{args.port}", upstream=UPSTREAM, model=MODEL,
+    log("listening", address=f"{args.listen}:{args.port}", upstream=UPSTREAM, embed_models=list(EMBED_MODELS),
         chat_model=CHAT_MODEL, host=socket.gethostname())
     srv.serve_forever()
 

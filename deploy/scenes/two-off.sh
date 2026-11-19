@@ -5,7 +5,9 @@
 # Kubernetes в это время ничего не переносит и не перезапускает. Работает то, что уже запущено
 # на machine-1: вход видит один живой сервер поиска, тот читает свою копию базы.
 #   deploy/scenes/two-off.sh                     VMS="machine-2 machine-3" OFF=60 RATE=10
-# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
+# Алиас поиска (SEARCH_ALIAS) на время сцены выключается: иначе сервис ушёл бы по алиасу с contracts_rf3
+# на рабочую коллекцию; в конце возвращается прежний.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11; выключение алиаса дописано 19.11 без стенда.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -16,12 +18,14 @@ mkdir -p "$OUT"
 t0=$(date +%s)
 mark() { echo "  +$(( $(date +%s) - t0 )) s  $*" | tee -a "$OUT/timeline.txt"; }
 kc() { limactl shell machine-1 sudo k3s kubectl "$@"; }
-use() {  # $1 коллекция для сервиса поиска
-  kc -n search set env deploy/search "COLLECTION=$1" >/dev/null
+use() {  # $1 коллекция для сервиса поиска, $2 алиас (пусто: без алиаса, ровно эта коллекция)
+  kc -n search set env deploy/search "COLLECTION=$1" "SEARCH_ALIAS=$2" >/dev/null
   kc -n search rollout status deploy/search --timeout=180s >/dev/null
 }
+ALIAS_BEFORE=$(kc -n search get deploy search \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SEARCH_ALIAS")].value}')
 
-use contracts_rf3
+use contracts_rf3 ""
 mark "search switched to contracts_rf3 (full copy on every machine)"
 "$HERE/load.sh" start "$RATE"
 mark "load started"
@@ -37,6 +41,6 @@ mark "bringing back: $VMS"
 "$HERE/return.sh" $VMS | tee -a "$OUT/timeline.txt"
 sleep "$TAIL"
 "$HERE/load.sh" stop "$OUT/load.json" | tee "$OUT/summary.txt"
-use contracts_rf2
-mark "search back on contracts_rf2"
+use contracts_rf2 "$ALIAS_BEFORE"
+mark "search back on contracts_rf2${ALIAS_BEFORE:+, alias $ALIAS_BEFORE}"
 echo "results in $OUT"

@@ -66,7 +66,14 @@ spec:
             - {name: QDRANT_LOCAL_URL, value: "http://QDRANT_LOCAL_CLUSTER_IP:6333"}
             # соединение внутри стенда ставится за миллисекунды; молчащий пир отпускаем через 0,1 с
             - {name: QDRANT_CONNECT_TIMEOUT, value: "0.1"}
+            # пара на старте: коллекция и модель вопроса для неё
             - {name: COLLECTION, value: contracts_rf2}
+            - {name: EMBED_MODEL, value: bge-m3}
+            # смена модели на ходу (deploy/scenes/model-switch.sh): раз в секунду сервис смотрит, куда
+            # указывает алиас, и берёт новую пару (коллекция, модель) только после проверки отпечатка по
+            # реестру; не сошлось — отвечает прежней парой. Пустой SEARCH_ALIAS: ровно пара выше, как раньше
+            - {name: SEARCH_ALIAS, value: contracts}
+            - {name: REGISTRY_COLLECTION, value: embedding_registry}
             - {name: SEARCH_MODE, value: dense}
             - {name: OLLAMA_URL, value: "http://192.168.105.1:11434"}
             - {name: ANSWER_MODEL, value: "qwen3:8b"}

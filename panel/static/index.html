@@ -753,8 +753,14 @@ footer { display: flex; justify-content: space-between; align-items: center; fon
       }
     }
     const s = q.summary || {};
-    let note = `${s.active ?? 0}/${s.total ?? 0} replicas Active · ${q.collection || ""}`;
-    if (q.alias) note += ` (alias ${q.alias})`;
+    // «алиас → коллекция (модель)»: модель из ответов поиска за 10 с (load.serving). Сцена смены модели:
+    // если алиас указывает на коллекцию, которой никто не отвечает (поиск её отверг), видно «not serving»
+    const served = S.load && !S.load.stale ? S.load.serving || [] : [];
+    const model = served.find((r) => r.collection === q.collection)?.model;
+    let what = (q.alias ? `${q.alias} → ` : "") + (q.collection || "");
+    if (model) what += ` (${model})`;
+    else if (q.alias && served.length) what += " · not serving";
+    let note = `${s.active ?? 0}/${s.total ?? 0} replicas Active · ${what}`;
     if (!q.ok || S.sources?.qdrant?.ok === false) note += ` · ▲ data ${fmtAge(S.sources?.qdrant?.age_s)} old`;
     setText($("#q-note"), note);
   }
