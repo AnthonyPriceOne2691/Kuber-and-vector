@@ -1,0 +1,27 @@
+# Grafana стенда на machine-4 (deploy/monitoring/install.sh), архив OSS из комплекта.
+# Только 127.0.0.1:3000, на Мак пробрасывается портом. Настройки, источник данных и дашборд
+# заданы файлами в /etc/grafana. Документация Grafana советует не меньше 512 МБ памяти,
+# потолок 768 МБ; при нехватке памяти ядро убьёт Grafana раньше входа HAProxy.
+[Unit]
+Description=Grafana (стенд, machine-4)
+After=network-online.target prometheus.service
+Wants=network-online.target
+
+[Service]
+User=grafana
+Group=grafana
+WorkingDirectory=/opt/grafana
+ExecStart=/opt/grafana/bin/grafana server --config=/etc/grafana/grafana.ini --homepath=/opt/grafana
+Restart=on-failure
+RestartSec=5
+MemoryHigh=640M
+MemoryMax=768M
+OOMScoreAdjust=500
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/grafana /var/log/grafana
+
+[Install]
+WantedBy=multi-user.target

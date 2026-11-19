@@ -1,0 +1,29 @@
+# node_exporter стенда (deploy/monitoring/install.sh): процессор, память и нагрузка машины.
+# Только три коллектора и без метрик самого экспортёра. Адрес (@LISTEN@) ставит install.sh:
+# на машинах кластера адрес lima0, на machine-4 127.0.0.1. Перед стартом ставится фильтр
+# nftables: порт 9100 открыт только machine-4 и самой машине (/etc/node_exporter/guard.nft).
+[Unit]
+Description=Prometheus node_exporter (стенд)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+ExecStartPre=+/usr/sbin/nft -f /etc/node_exporter/guard.nft
+ExecStart=/usr/local/bin/node_exporter \
+  --web.listen-address=@LISTEN@:9100 \
+  --web.disable-exporter-metrics \
+  --collector.disable-defaults \
+  --collector.cpu \
+  --collector.meminfo \
+  --collector.loadavg
+Restart=on-failure
+RestartSec=5
+MemoryMax=128M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
