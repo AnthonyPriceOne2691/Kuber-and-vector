@@ -43,6 +43,17 @@ if ! kubectl -n qdrant get secret qdrant-keys >/dev/null 2>&1; then
   echo "ключи созданы в Secret qdrant/qdrant-keys"
 fi
 helm upgrade --install qdrant /tmp/qdrant-chart.tgz -n qdrant -f /tmp/qdrant-values.yaml --wait --timeout 10m >/dev/null
+# Pod Security «restricted»: сначала на сухую (сервер сам скажет, какие работающие поды не прошли бы);
+# если такие есть, только предупреждаем и пишем в аудит, иначе запрещаем
+PSA="pod-security.kubernetes.io"
+probe=$(kubectl label --dry-run=server --overwrite ns qdrant "$PSA/enforce=restricted" 2>&1 || true)
+if echo "$probe" | grep -qi violate; then
+  echo "Pod Security restricted для qdrant пока не включён: $probe"
+  kubectl label --overwrite ns qdrant "$PSA/warn=restricted" "$PSA/audit=restricted" >/dev/null
+else
+  kubectl label --overwrite ns qdrant "$PSA/enforce=restricted" "$PSA/warn=restricted" "$PSA/audit=restricted" >/dev/null
+  echo "Pod Security restricted для qdrant включён"
+fi
 # сеть: Qdrant принимает только поиск и своих пиров (deploy/qdrant/netpol.yaml)
 kubectl apply -f /tmp/qdrant-netpol.yaml >/dev/null
 # свой пир на машине для сервиса поиска (deploy/qdrant/local-svc.yaml)

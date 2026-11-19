@@ -21,6 +21,14 @@ check "три узла Ready" bash -c "[ \$(limactl shell machine-1 sudo k3s kub
 check "etcd из трёх членов" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl get nodes -l node-role.kubernetes.io/etcd=true --no-headers | wc -l) -eq 3 ]"
 check "три пира Qdrant, по одному на машину" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n qdrant get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
 check "три пода поиска на трёх машинах" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n search get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
+psa_rejects() {  # привилегированный под в search сервер отклоняет ещё до запуска (dry-run)
+  kc -n search run psa-probe --image=localhost/search:stage2 --restart=Never --dry-run=server \
+    --overrides='{"apiVersion":"v1","spec":{"containers":[{"name":"psa-probe","image":"localhost/search:stage2","securityContext":{"privileged":true}}]}}' \
+    2>&1 | grep -q "violates PodSecurity"
+}
+check "секреты в etcd зашифрованы" bash -c "limactl shell machine-1 sudo k3s secrets-encrypt status | grep -q 'Encryption Status: Enabled'"
+check "журнал аудита API пишется" limactl shell machine-1 sudo test -s /var/lib/rancher/k3s/server/logs/audit.log
+check "привилегированный под отклоняется (Pod Security restricted)" psa_rejects
 check "Falco на трёх машинах" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n falco get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
 
 echo "поиск через вход https://$ENTRY"

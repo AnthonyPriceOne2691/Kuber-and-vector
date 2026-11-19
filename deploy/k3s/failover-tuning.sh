@@ -23,7 +23,8 @@ set -euo pipefail
 GRACE=$1
 CONF=/etc/rancher/k3s/config.yaml.d/50-failover.yaml
 ENVF=/etc/systemd/system/k3s.service.env
-want_conf=$(printf '%s\n' "# deploy/k3s/failover-tuning.sh" "kube-controller-manager-arg:" "  - \"node-monitor-grace-period=$GRACE\"")
+# «+» дописывает к аргументам из 40-cis.yaml, а не заменяет их (файлы читаются по алфавиту)
+want_conf=$(printf '%s\n' "# deploy/k3s/failover-tuning.sh" "kube-controller-manager-arg+:" "  - \"node-monitor-grace-period=$GRACE\"")
 want_env=$(printf '%s\n' "HTTP2_READ_IDLE_TIMEOUT_SECONDS=10" "HTTP2_PING_TIMEOUT_SECONDS=5")
 have_conf=$(cat "$CONF" 2>/dev/null || true)
 have_env=$(grep -E '^HTTP2_(READ_IDLE|PING)_TIMEOUT_SECONDS=' "$ENVF" 2>/dev/null || true)

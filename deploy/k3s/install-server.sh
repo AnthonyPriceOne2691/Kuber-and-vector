@@ -4,7 +4,7 @@
 #   ./install-server.sh machine-2 join machine-1    следующий сервер присоединяется к кластеру
 # Узлы говорят между собой только по сети машин (lima0, socket_vmnet), трафик подов между
 # узлами шифрует WireGuard (flannel wireguard-native): сеть машин считаем враждебной.
-# Остальные флаги безопасности (профиль CIS, шифрование секретов, аудит) добавит дорожка безопасности.
+# Флаги профиля CIS (шифрование секретов, аудит, Pod Security) ставит deploy/k3s/cis.sh до установки.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -34,6 +34,7 @@ case "$MODE" in
   *) echo "режим: init или join"; exit 1 ;;
 esac
 
+"$HERE/cis.sh" "$VM"
 limactl copy "$KIT/k3s-arm64" "$VM:/tmp/k3s"
 limactl copy "$KIT/k3s-airgap-images-arm64.tar.zst" "$VM:/tmp/k3s-airgap-images-arm64.tar.zst"
 limactl copy "$KIT/install.sh" "$VM:/tmp/k3s-install.sh"
