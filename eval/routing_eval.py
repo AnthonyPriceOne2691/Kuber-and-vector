@@ -585,17 +585,25 @@ def boot(series: dict[str, dict[str, list[float]]], b: int = BOOT, seed: int = 0
 
 # ---------- части вопроса через Ollama ----------
 
+def ensure_in_portions(emb, texts: list[str], pause: float, portion: int = 160, progress: bool = False) -> None:
+    """Векторы, которых ещё нет в кэше, порциями с паузой: через ту же Ollama ходит живой стенд."""
+    todo = [t for t in dict.fromkeys(texts) if emb.key(t) not in emb.index]
+    for j in range(0, len(todo), portion):
+        if j:
+            time.sleep(pause)
+        emb.ensure(todo[j:j + portion], progress=False)
+        if progress and (j // portion) % 10 == 9:
+            rate = emb.computed / emb.seconds if emb.seconds else 0.0
+            print(f"  векторы: {min(j + portion, len(todo))}/{len(todo)}, {rate:.1f} текстов/с", flush=True)
+
+
 def embed_texts(texts: list[str], args) -> tuple[dict[str, list[float]], dict]:
-    """Векторы коротких текстов (bge-m3, пакетами по 32, кэш на диске). Возвращает нормированные списки."""
+    """Векторы коротких текстов (пакетами по 32, кэш на диске). Возвращает нормированные списки."""
     from app.embedding import OllamaEmbedder
     emb = OllamaEmbedder(model=args.embed_model, url=args.ollama, cache_dir=args.embed_cache)
     try:
         before = emb.computed
-        todo = [t for t in dict.fromkeys(texts) if emb.key(t) not in emb.index]
-        for j in range(0, len(todo), 160):  # порциями с паузой: через ту же Ollama ходит живой стенд
-            if j:
-                time.sleep(args.embed_pause)
-            emb.ensure(todo[j:j + 160], progress=False)
+        ensure_in_portions(emb, texts, args.embed_pause)
         out = {t: unit(emb.vector(t)) for t in set(texts)}
         stats = {"texts": len(out), "computed": emb.computed - before, "seconds": round(emb.seconds, 2)}
     finally:
@@ -604,16 +612,19 @@ def embed_texts(texts: list[str], args) -> tuple[dict[str, list[float]], dict]:
 
 
 def parts_vectors(corpus: Corpus, queries: list[dict], qv: array, args) -> tuple[dict, dict]:
-    """Векторы названий, ссылок и самих вопросов; сверка: вектор одного вопроса заново против кэша."""
-    titles = [TITLE_PREFIX + t for t in corpus.title]
+    """Векторы названий, ссылок и самих вопросов; сверка: вектор одного вопроса заново против кэша.
+    Префиксы модели (args.query_prefix у ссылки и вопроса, args.doc_prefix у названия) по умолчанию
+    пустые, как у bge-m3; другие модели передают свои (eval/models_eval.py)."""
+    qp, dp = getattr(args, "query_prefix", ""), getattr(args, "doc_prefix", "")
+    titles = [dp + TITLE_PREFIX + t for t in corpus.title]
     refs = sorted({q["ref"] for q in queries})
     asks = sorted({q["ask"] for q in queries})
-    probe = queries[0]["query"]
-    vec, stats = embed_texts(titles + refs + asks + [probe], args)
+    probe = qp + queries[0]["query"]
+    vec, stats = embed_texts(titles + [qp + r for r in refs] + [qp + a for a in asks] + [probe], args)
     dim = corpus.dim
     stats["probe_cos"] = round(dot(vec[probe], unit(qv[0:dim])), 6)
-    return {"title": [vec[t] for t in titles], "ref": {r: vec[r] for r in refs},
-            "ask": {a: vec[a] for a in asks}}, stats
+    return {"title": [vec[t] for t in titles], "ref": {r: vec[qp + r] for r in refs},
+            "ask": {a: vec[qp + a] for a in asks}}, stats
 
 
 def no_semicolon(queries: list[dict]) -> dict[str, int]:
