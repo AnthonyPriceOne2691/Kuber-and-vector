@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contract Search</title>
+<meta name="color-scheme" content="dark">
+<style>
+/* Сцена поиска для ролика (0:15–0:40): вопрос, top-k кусков от живого сервиса с адресом источника,
+   разметка юристов LegalBench-RAG зелёным там, где кусок с ней пересекается. Сцена 1920×1080
+   масштабируется под окно целиком; токены цветов и шрифты те же, что у панели стенда. */
+:root {
+  color-scheme: dark;
+  --page: #0b0e13;
+  --surface: #131820;
+  --surface-2: #1a2029;
+  --surface-3: #232a35;
+  --hairline: #252c37;
+  --axis: #3a4350;
+  --ink: #eef1f5;
+  --ink-2: #b9c1cd;
+  --muted: #818a99;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --critical: #d03b3b;
+  --p95: #8792a4;
+  --accent: #3987e5;
+  --sans: system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--page); overflow: hidden; }
+body { color: var(--ink); font: 400 18px/1.3 var(--sans); -webkit-font-smoothing: antialiased; }
+[hidden] { display: none !important; }
+button, select, textarea { font: inherit; color: inherit; }
+.still *, .still *::before, .still *::after { transition: none !important; animation: none !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+#stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0;
+  padding: 18px 28px 14px; display: grid; grid-template-rows: 58px 1fr 26px; row-gap: 14px; }
+
+/* --- шапка --- */
+header { display: flex; align-items: center; justify-content: space-between; min-width: 0; }
+.title { font-size: 31px; font-weight: 650; letter-spacing: -0.01em; }
+.subtitle { font-size: 16px; color: var(--ink-2); margin-top: 3px; }
+.hdr-right { display: flex; align-items: center; gap: 20px; }
+.sim { font-size: 13px; font-weight: 700; letter-spacing: .14em; color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent); padding: 6px 11px; border-radius: 7px; }
+.sim::before { content: "▲"; color: var(--warning); margin-right: 8px; font-size: 11px; vertical-align: 1px; }
+.tabs { display: flex; gap: 4px; padding: 4px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 11px; }
+.tab { border: 0; background: transparent; color: var(--muted); font-size: 16px; font-weight: 650; padding: 8px 20px;
+  border-radius: 8px; cursor: pointer; transition: background-color .25s, color .25s; }
+.tab.on { background: var(--surface-3); color: var(--ink); }
+
+main#scene { display: grid; grid-template-columns: 1fr 500px; column-gap: 20px; min-height: 0; }
+.left { display: flex; flex-direction: column; gap: 14px; min-height: 0; min-width: 0; }
+.right { display: flex; flex-direction: column; gap: 16px; min-height: 0; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 14px; min-width: 0; position: relative; }
+.label { font-size: 13px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.note { font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; min-width: 0; }
+
+/* --- вопрос --- */
+.ask { display: grid; grid-template-columns: 1fr auto; column-gap: 18px; row-gap: 6px; padding: 14px 16px 12px 20px;
+  flex: none; transition: border-color .3s; }
+.ask:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--hairline)); }
+#q { grid-column: 1; grid-row: 1; display: block; width: 100%; height: 57px; border: 0; outline: 0; resize: none;
+  background: transparent; font-size: 21px; font-weight: 500; line-height: 28px; overflow: hidden; caret-color: var(--accent); }
+#q::placeholder { color: var(--muted); }
+.ask-side { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 12px; }
+.k-wrap { position: relative; display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--muted); }
+.k-wrap::after { content: "▾"; position: absolute; right: 11px; top: 50%; transform: translateY(-50%); font-size: 12px;
+  color: var(--muted); pointer-events: none; }
+#k { appearance: none; -webkit-appearance: none; background: var(--surface-2); border: 1px solid var(--hairline);
+  border-radius: 9px; font-size: 18px; font-weight: 650; padding: 10px 30px 10px 14px; cursor: pointer;
+  font-variant-numeric: tabular-nums; }
+.go { height: 52px; min-width: 132px; padding: 0 26px; border: 0; border-radius: 11px; background: var(--accent);
+  color: #fff; font-size: 19px; font-weight: 650; cursor: pointer; transition: filter .15s, transform .15s; }
+.go:hover { filter: brightness(1.08); }
+.go.pressed, .go:active { transform: translateY(1px) scale(.985); filter: brightness(1.15); }
+.ask-meta { grid-column: 1; grid-row: 2; min-height: 19px; font-size: 14px; color: var(--muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.ask-meta b { color: var(--ink-2); font-weight: 650; }
+.ask-meta[data-kind="bench"]::before { content: "◆"; color: var(--good); margin-right: 8px; font-size: 11px; vertical-align: 1px; }
+
+/* --- выдача --- */
+.body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; scrollbar-width: none; }
+.body::-webkit-scrollbar { display: none; }
+.res-head { flex: none; padding: 0 4px; }
+.results { display: flex; flex-direction: column; gap: 8px; }
+.hit { flex: none; padding: 10px 18px 11px; overflow: hidden; transition: opacity .35s ease, transform .35s ease, border-color .5s;
+  transition-delay: var(--d, 0ms); }
+.hit.enter { opacity: 0; transform: translateY(8px); }
+.hit[data-match="yes"] { border-color: color-mix(in srgb, var(--good) 42%, var(--hairline)); }
+.hit[data-match="yes"]::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--good); }
+.hit-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.rank { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 8px; background: var(--surface-3);
+  font-size: 15px; font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.doc { font-size: 19px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.badge { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 650;
+  padding: 4px 12px 4px 10px; border-radius: 999px; white-space: nowrap; background: var(--surface-2); color: var(--muted); }
+.badge i { font-style: normal; font-size: 12px; }
+.badge.yes { background: color-mix(in srgb, var(--good) 22%, var(--surface)); color: var(--ink); }
+.badge.yes i { color: var(--good); }
+.addr { display: flex; align-items: baseline; margin: 3px 0 0 40px; font: 14px/1.3 var(--mono); color: var(--muted);
+  white-space: nowrap; min-width: 0; }
+.addr > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.addr > span + span::before { content: "·"; margin: 0 10px; color: var(--axis); }
+.addr .sec { font: 600 15px var(--sans); color: var(--ink-2); flex: 0 1 auto; max-width: 40%; }
+.addr .file { flex: 0 1 auto; }
+.addr .span, .addr .score { flex: none; overflow: visible; }
+.addr .span { color: var(--ink-2); }
+.addr i { font-style: normal; margin-left: 7px; }
+.addr i.ok { color: var(--good); } .addr i.bad { color: #ff7b7b; }
+.text { margin: 6px 0 0 40px; font-size: 16.5px; line-height: 1.42; color: var(--ink-2); overflow-wrap: anywhere; }
+/* кусок мимо разметки — две строки: в кадре главное те, что с ней совпали (весь текст остаётся в DOM) */
+.hit[data-match="no"] .text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+mark.truth { color: var(--ink); background: color-mix(in srgb, var(--good) 27%, transparent); border-radius: 3px;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--good) 85%, transparent); padding: 1px 0;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.placeholder { margin: 26px 4px; font-size: 18px; color: var(--muted); }
+.loading { display: flex; align-items: center; gap: 12px; margin: 20px 4px; font-size: 18px; color: var(--ink-2); }
+.loading::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); animation: breathe 1.1s ease-in-out infinite; }
+.error-card { padding: 16px 20px; border-color: color-mix(in srgb, var(--critical) 55%, var(--hairline));
+  background: color-mix(in srgb, var(--critical) 10%, var(--surface)); font-size: 18px; display: flex; gap: 12px; align-items: baseline; }
+.error-card::before { content: "✕"; color: #ff7b7b; font-size: 15px; }
+.error-card small { display: block; font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+/* --- ответ модели --- */
+.answer { flex: none; padding: 16px 20px 16px; }
+.ans-head { display: flex; align-items: center; gap: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 650; padding: 4px 12px 4px 10px;
+  border-radius: 999px; white-space: nowrap; background: var(--surface-3); }
+.chip i { font-style: normal; font-size: 12px; color: var(--muted); }
+.chip.good { background: color-mix(in srgb, var(--good) 22%, var(--surface)); } .chip.good i { color: var(--good); }
+.chip.warn { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); } .chip.warn i { color: var(--warning); }
+.chip.bad { background: color-mix(in srgb, var(--critical) 28%, var(--surface)); } .chip.bad i { color: #ff7b7b; }
+.ans-text { margin-top: 12px; font-size: 21px; line-height: 1.45; color: var(--ink); }
+.ans-text.muted { color: var(--ink-2); }
+sup.cite { font-size: 13px; font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--accent) 32%, var(--surface));
+  padding: 1px 6px; border-radius: 5px; margin: 0 2px; vertical-align: 4px; line-height: 1; }
+.cites { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 10px; }
+.cite-row { display: grid; grid-template-columns: 34px 1fr; column-gap: 10px; }
+.cite-n { font-size: 14px; font-weight: 700; color: var(--ink-2); padding-top: 2px; }
+.cite-q { font-size: 16px; line-height: 1.4; color: var(--ink-2); }
+.cite-q i { font-style: normal; margin-right: 8px; }
+.cite-q i.ok { color: var(--good); } .cite-q i.bad { color: #ff7b7b; }
+.cite-a { margin-top: 3px; font: 13.5px var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- правая колонка --- */
+.side { padding: 16px 20px 16px; display: flex; flex-direction: column; min-height: 0; }
+.truth { flex: 1 1 auto; overflow: hidden; }
+#truth-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.side-sub { margin-top: 6px; font-size: 15px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-empty { margin-top: 14px; font-size: 16px; color: var(--muted); line-height: 1.4; }
+.snip { margin-top: 14px; flex: none; }
+.snip-text { font-size: 18px; line-height: 1.45; color: var(--ink); background: color-mix(in srgb, var(--good) 13%, var(--surface));
+  border-left: 4px solid var(--good); border-radius: 4px 8px 8px 4px; padding: 12px 16px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 9; overflow: hidden; overflow-wrap: anywhere; }
+.snip-addr { margin-top: 8px; font: 13.5px var(--mono); color: var(--muted); display: flex; min-width: 0; white-space: nowrap; }
+.snip-addr span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.snip-addr span + span { flex: none; }
+.snip-addr span + span::before { content: "·"; margin: 0 9px; color: var(--axis); }
+.snip-found { margin-top: 7px; font-size: 16px; font-weight: 600; color: var(--ink); }
+.snip-found i { font-style: normal; margin-right: 8px; }
+.snip-found.yes i { color: var(--good); } .snip-found.no i { color: var(--warning); }
+.more { margin-top: 10px; font-size: 14px; color: var(--muted); }
+.coverage { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--hairline); font-size: 16px; color: var(--ink-2); flex: none; }
+.coverage b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.request { flex: none; }
+.kv { display: grid; grid-template-columns: 104px 1fr; row-gap: 7px; column-gap: 12px; margin-top: 12px; font-size: 15px; }
+.kv dt { color: var(--muted); white-space: nowrap; }
+.kv dd { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.quality { flex: none; }
+.q-rows { margin-top: 6px; }
+.q-row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; row-gap: 6px; margin-top: 12px; }
+.q-name { font-size: 15px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.q-val { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.q-val.pending { font-size: 16px; font-weight: 600; color: var(--muted); }
+.q-track { grid-column: 1 / -1; height: 9px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+.q-track i { display: block; height: 100%; width: 0; border-radius: 5px; background: var(--accent); transition: width .9s ease; }
+.q-row.alt .q-track i { background: var(--p95); }
+.q-note { margin-top: 12px; font-size: 14px; color: var(--muted); line-height: 1.38; }
+
+footer { display: flex; justify-content: space-between; align-items: center; gap: 20px; font-size: 15px; color: var(--muted); white-space: nowrap; }
+footer span { overflow: hidden; text-overflow: ellipsis; }
+#foot-right::before { content: "●"; margin-right: 8px; font-size: 11px; vertical-align: 1px; color: var(--axis); }
+#foot-right[data-kind="live"]::before { color: var(--good); }
+#foot-right[data-kind="stub"]::before { color: var(--warning); }
+#foot-right[data-kind="bad"]::before { color: var(--critical); }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <header>
+    <div>
+      <div class="title">Contract search</div>
+      <div class="subtitle">Every passage comes with its source · document · section · file · characters</div>
+    </div>
+    <div class="hdr-right">
+      <div class="sim" id="sim" hidden>SIMULATED DATA</div>
+      <nav class="tabs" role="tablist">
+        <button class="tab on" id="tab-search" role="tab" type="button" data-tab="search">Search</button>
+        <button class="tab" id="tab-answer" role="tab" type="button" data-tab="answer">Answer</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="scene" data-state="idle" data-tab="search" data-match="none">
+    <section class="left">
+      <div class="card ask">
+        <textarea id="q" rows="2" spellcheck="false" autocomplete="off" placeholder="Ask about a contract"></textarea>
+        <div class="ask-side">
+          <label class="k-wrap" for="k">top <select id="k"></select></label>
+          <button class="go" id="go" type="button">Search</button>
+        </div>
+        <div class="ask-meta" id="ask-meta" data-kind="none"></div>
+      </div>
+      <div class="body" id="body">
+        <div class="card answer" id="answer" hidden>
+          <div class="ans-head"><span class="label">Answer</span><span class="chip" id="answer-status"><i></i><span></span></span><span class="note" id="answer-model"></span></div>
+          <p class="ans-text" id="answer-text"></p>
+          <div class="cites" id="citations"></div>
+        </div>
+        <div class="row res-head"><span class="label" id="res-label">Results</span><span class="note" id="res-note"></span></div>
+        <div class="results" id="results"><p class="placeholder">Results appear here, each with its source address.</p></div>
+      </div>
+    </section>
+
+    <aside class="right">
+      <section class="card side truth" id="truth" data-state="idle">
+        <div class="label">Lawyer annotation · LegalBench-RAG</div>
+        <div class="side-sub" id="truth-meta"></div>
+        <div id="truth-body"><p class="side-empty">The passage marked by lawyers shows here after a benchmark question.</p></div>
+      </section>
+      <section class="card side request" id="request">
+        <div class="label">Request</div>
+        <p class="side-empty" id="request-empty">Timing and the machine that served the request show here.</p>
+        <dl class="kv" id="request-kv" hidden></dl>
+      </section>
+      <section class="card side quality" id="quality" hidden>
+        <div class="label" id="quality-title"></div>
+        <div class="side-sub" id="quality-sub"></div>
+        <div class="q-rows" id="quality-rows"></div>
+        <p class="q-note" id="quality-note"></p>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    <span id="caption"></span>
+    <span id="foot-right" data-kind="none"></span>
+  </footer>
+</div>
+<script>
+// Сцена поиска. Данные с сервера кладутся в страницу только как текст (textContent и узлы DOM):
+// куски договоров приходят со стенда, и никакой их фрагмент не становится разметкой. Управление
+// адресом для повторяемой съёмки: ?preset=N (с 1), ?q=…, ?k=…, ?tab=answer, ?autoplay=1 (набрать и
+// искать сразу) или ?autoplay=click (по щелчку в поле), ?typing=0 или мс на знак, ?still (без анимаций).
+// Устойчивые цели для записи: #q, #k, #go, #tab-search, #tab-answer, #scene[data-state=done],
+// #hit-N, #hit-N mark.truth, #hit-N .addr, #truth .snip-text, #request, #quality.
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const params = new URLSearchParams(location.search);
+  const flag = (name) => params.has(name) && params.get(name) !== "0";
+  const STILL = flag("still") || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (STILL) document.documentElement.classList.add("still");
+  const TYPE_MS = Number.isFinite(+params.get("typing")) && params.get("typing") !== null ? +params.get("typing") : 20;
+  const WAIT = { search: 20000, answer: 200000 };
+
+  // --- сцена 1920×1080 целиком в окне ---------------------------------------------------
+  const stage = $("#stage");
+  function fit() {
+    const scale = Math.min(innerWidth / 1920, innerHeight / 1080) || 1;
+    const x = (innerWidth - 1920 * scale) / 2, y = (innerHeight - 1080 * scale) / 2;
+    stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }
+  addEventListener("resize", fit);
+  fit();
+
+  // --- помощники ------------------------------------------------------------------------
+  function h(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const nf = new Intl.NumberFormat("en-US");
+  function fmtMs(ms) {
+    if (ms == null || !isFinite(ms)) return "n/a";
+    if (ms >= 1000) return `${(ms / 1000).toFixed(1)} s`;
+    return ms < 10 ? `${ms.toFixed(1)} ms` : `${Math.round(ms)} ms`;
+  }
+  const fmtScore = (s) => (typeof s === "number" ? s.toFixed(3) : "n/a");
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function chip(el, cls, icon, text) {
+    el.className = "chip " + cls;
+    el.children[0].textContent = icon;
+    el.children[1].textContent = text;
+  }
+  async function getJSON(url, ms) {
+    const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(ms) });
+    let doc = null;
+    try { doc = await r.json(); } catch (e) { doc = null; }
+    return { status: r.status, doc };
+  }
+
+  // --- состояние ------------------------------------------------------------------------
+  const scene = $("#scene"), qBox = $("#q"), kSel = $("#k"), goBtn = $("#go");
+  let CFG = null, tab = params.get("tab") === "answer" ? "answer" : "search", seq = 0;
+  const setState = (s) => { scene.dataset.state = s; };
+
+  function kMax() { const L = CFG?.limits || {}; return (tab === "answer" ? L.answer_k_max : L.search_k_max) || 1; }
+  function fillK(want) {
+    const max = kMax(), cur = parseInt(want ?? kSel.value ?? CFG?.limits?.k_default, 10);
+    kSel.replaceChildren();
+    for (let i = 1; i <= max; i++) { const o = h("option", "", String(i)); o.value = String(i); kSel.append(o); }
+    const def = CFG?.limits?.k_default || 1;
+    kSel.value = String(Math.min(max, Number.isInteger(cur) && cur >= 1 ? cur : def));
+  }
+  function setTab(name, keep) {
+    tab = name === "answer" ? "answer" : "search";
+    scene.dataset.tab = tab;
+    for (const b of document.querySelectorAll(".tab")) {
+      const on = b.dataset.tab === tab;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    }
+    goBtn.textContent = tab === "answer" ? "Answer" : "Search";
+    fillK(kSel.value);
+    if (!keep) resetView();
+  }
+  function resetView() {
+    seq++;
+    setState("idle");
+    scene.dataset.match = "none";
+    resetSide("Timing and the machine that served the request show here.");
+    $("#answer").hidden = true;
+    $("#res-label").textContent = tab === "answer" ? "Sources" : "Results";
+    $("#res-note").textContent = "";
+    $("#results").replaceChildren(h("p", "placeholder", tab === "answer"
+      ? "The answer cites numbered sources, each with its address."
+      : "Results appear here, each with its source address."));
+  }
+
+  // --- вопрос: есть ли у него разметка юристов -------------------------------------------
+  let metaTimer = 0, metaSeq = 0;
+  function onInput(now) { clearTimeout(metaTimer); metaTimer = setTimeout(checkTruth, now ? 0 : 250); }
+  async function checkTruth() {
+    const q = qBox.value.trim(), my = ++metaSeq, el = $("#ask-meta");
+    if (q.length < (CFG?.limits?.q_min || 1)) { el.replaceChildren(); el.dataset.kind = "none"; return; }
+    let doc = null;
+    try { doc = (await getJSON("/api/truth?q=" + encodeURIComponent(q), 5000)).doc; } catch (e) { doc = null; }
+    if (my !== metaSeq) return;
+    if (!doc || !doc.ok) { el.replaceChildren(); el.dataset.kind = "none"; return; }
+    if (!doc.available) { el.replaceChildren(h("span", "", "Lawyer annotation is not available on this machine")); el.dataset.kind = "none"; return; }
+    const t = doc.truth;
+    if (!t) { el.replaceChildren(h("span", "", "Not a LegalBench-RAG question · no annotation to compare with")); el.dataset.kind = "free"; return; }
+    el.replaceChildren(h("b", "", "LegalBench-RAG question"),
+      h("span", "", ` · ${t.dataset_name} · ${plural(t.snippets.length, "annotated span", "annotated spans")}`));
+    el.dataset.kind = "bench";
+  }
+
+  // --- запрос -----------------------------------------------------------------------------
+  async function run() {
+    const q = qBox.value.trim(), lim = CFG?.limits || {};
+    if (q.length < (lim.q_min || 1)) { qBox.focus(); return; }
+    const my = ++seq, k = kSel.value, which = tab;
+    setState("loading");
+    scene.dataset.match = "none";
+    resetSide("Waiting for the reply.");
+    $("#answer").hidden = true;
+    $("#res-note").textContent = "";
+    const waitEl = h("p", "loading", which === "answer" ? "Retrieving sources and writing an answer" : "Searching the contracts");
+    $("#results").replaceChildren(waitEl);
+    // ответ модели идёт секунды: честный счётчик ожидания вместо застывшей точки
+    const t0 = performance.now();
+    const ticker = which === "answer" ? setInterval(() => {
+      waitEl.textContent = `Retrieving sources and writing an answer · ${Math.floor((performance.now() - t0) / 1000)} s`;
+    }, 1000) : 0;
+    let res;
+    try {
+      res = await getJSON(`/api/${which}?q=${encodeURIComponent(q)}&k=${encodeURIComponent(k)}`, WAIT[which]);
+    } catch (e) {
+      res = { status: 0, doc: { ok: false, error: e && e.name === "TimeoutError" ? "No reply from the showcase server" : "Showcase server not reachable" } };
+    } finally {
+      clearInterval(ticker);
+    }
+    if (my !== seq) return;
+    const d = res.doc;
+    if (!d || !d.ok) {
+      renderError(d?.error || `Showcase server answered HTTP ${res.status}`, d?.kind);
+      setState("error");
+      return;
+    }
+    render(d, which);
+    setState("done");
+  }
+
+  function render(d, which) {
+    const r = d.result || {}, ann = d.annotations || [];
+    const hits = (which === "answer" ? r.sources : r.results) || [];
+    scene.dataset.match = d.truth ? (ann.some((a) => a && a.match) ? "yes" : "no") : "none";
+    $("#sim").hidden = !(d.stub || CFG?.stub);
+    if (which === "answer") renderAnswer(r); else $("#answer").hidden = true;
+    renderHits(hits, ann, d, which);
+    renderTruth(d);
+    renderRequest(d, r, which);
+  }
+
+  // --- куски ------------------------------------------------------------------------------
+  function renderHits(hits, ann, d, which) {
+    const box = $("#results");
+    $("#res-label").textContent = which === "answer" ? "Sources" : "Results";
+    const matched = ann.filter((a) => a && a.match).length;
+    let note = `top ${hits.length}`;
+    if (d.truth) note += matched ? ` · ${matched} of ${hits.length} ${matched === 1 ? "matches" : "match"} the annotation` : " · none matches the annotation";
+    $("#res-note").textContent = note;
+    if (!hits.length) { box.replaceChildren(h("p", "placeholder", "No passages found")); return; }
+    const cards = hits.map((hit, i) => hitCard(hit, ann[i] || {}, i + 1));
+    box.replaceChildren(...cards);
+    if (!STILL) {
+      cards.forEach((c, i) => { c.classList.add("enter"); c.style.setProperty("--d", `${i * 70}ms`); });
+      requestAnimationFrame(() => requestAnimationFrame(() => cards.forEach((c) => c.classList.remove("enter"))));
+    }
+  }
+  function hitCard(hit, a, rank) {
+    const el = h("article", "card hit");
+    el.id = `hit-${rank}`;
+    el.dataset.match = a.match === true ? "yes" : a.match === false ? "no" : "none";
+    const top = h("div", "hit-top");
+    top.append(h("span", "rank", String(rank)), h("span", "doc", hit.document || hit.file || "Untitled document"));
+    if (a.match === true) { const b = h("span", "badge yes match"); b.append(h("i", "", "✓"), h("span", "", "Matches annotation")); top.append(b); }
+    else if (a.match === false) top.append(h("span", "badge no", "No overlap"));
+    const addr = h("div", "addr");
+    if (hit.section) addr.append(h("span", "sec", hit.section));
+    addr.append(h("span", "file", hit.file || ""));
+    const span = Array.isArray(hit.span) ? hit.span : [];
+    const sp = h("span", "span", `chars [${span[0]}, ${span[1]}]`);
+    if (a.span_ok === true) { const ok = h("i", "ok", "✓"); ok.title = "Characters checked against the source file"; sp.append(ok); }
+    else if (a.span_ok === false) { const bad = h("i", "bad", "✕"); bad.title = "Source file differs at these characters"; sp.append(bad); }
+    addr.append(sp, h("span", "score", `score ${fmtScore(hit.score)}`));
+    const text = h("p", "text");
+    const segs = Array.isArray(a.segments) ? a.segments : [{ text: hit.text || "", truth: false }];
+    for (const s of segs) text.append(s.truth ? h("mark", "truth", s.text) : document.createTextNode(s.text || ""));
+    el.append(top, addr, text);
+    return el;
+  }
+
+  // --- ответ модели ----------------------------------------------------------------------
+  function renderAnswer(r) {
+    $("#answer").hidden = false;
+    const cites = Array.isArray(r.citations) ? r.citations : [];
+    const verified = cites.filter((c) => c.verified).length;
+    const st = $("#answer-status"), text = $("#answer-text");
+    $("#answer-model").textContent = r.model ? `model ${r.model}` : "";
+    text.className = "ans-text";
+    if (r.status === "answered") chip(st, "good", "✓", `Answered · ${verified} of ${cites.length} ${cites.length === 1 ? "quote" : "quotes"} verified`);
+    else if (r.status === "refused") { chip(st, "", "●", "No answer in the sources"); text.className = "ans-text muted"; }
+    else if (r.status === "unsupported") { chip(st, "warn", "▲", "Answer withheld · no quote verified in the sources"); text.className = "ans-text muted"; }
+    else chip(st, "", "●", r.status || "unknown");
+    text.replaceChildren();
+    const parts = String(r.answer || "").split(/\[(\d+)\]/);
+    parts.forEach((p, i) => { if (i % 2) text.append(h("sup", "cite", p)); else if (p) text.append(document.createTextNode(p)); });
+    const box = $("#citations");
+    box.replaceChildren();
+    box.hidden = !cites.length;
+    for (const c of cites) {
+      const row = h("div", "cite-row"), body = h("div");
+      const q = h("div", "cite-q");
+      q.append(h("i", c.verified ? "ok" : "bad", c.verified ? "✓" : "✕"), document.createTextNode(`“${c.quote || ""}”`));
+      const where = [c.document, c.section, Array.isArray(c.span) ? `chars [${c.span[0]}, ${c.span[1]}]` : null]
+        .filter(Boolean).join(" · ") || (c.valid === false ? "no such source" : "");
+      body.append(q, h("div", "cite-a", c.verified ? where : `${where ? where + " · " : ""}quote not found in this source`));
+      row.append(h("span", "cite-n", `[${c.n}]`), body);
+      box.append(row);
+    }
+  }
+
+  // --- разметка юристов -------------------------------------------------------------------
+  function renderTruth(d) {
+    const card = $("#truth"), body = $("#truth-body"), meta = $("#truth-meta");
+    meta.textContent = "";
+    if (!d.truth_available) {
+      card.dataset.state = "none";
+      body.replaceChildren(h("p", "side-empty", "Annotation data is not on this machine."));
+      return;
+    }
+    const t = d.truth;
+    if (!t) {
+      card.dataset.state = "none";
+      body.replaceChildren(h("p", "side-empty", "No lawyer annotation for this question. Only LegalBench-RAG questions have one."));
+      return;
+    }
+    card.dataset.state = t.snippets.some((s) => s.found_in && s.found_in.length) ? "found" : "missed";
+    meta.textContent = `${t.dataset_name} · ${plural(t.snippets.length, "span", "spans")} · ${nf.format(t.total_chars)} chars`;
+    const nodes = [];
+    const SHOW = 2;
+    t.snippets.slice(0, SHOW).forEach((sn, i) => {
+      const box = h("div", "snip");
+      box.id = `truth-${i + 1}`;
+      const where = h("div", "snip-addr");
+      where.append(h("span", "", sn.file), h("span", "", `chars [${sn.span[0]}, ${sn.span[1]}]`));
+      const found = sn.found_in || [];
+      const f = h("div", "snip-found " + (found.length ? "yes" : "no"));
+      f.append(h("i", "", found.length ? "✓" : "▲"),
+        document.createTextNode(found.length ? `Found in result ${found.join(", ")}` : `Not in the top ${d.k}`));
+      box.append(h("p", "snip-text", sn.text), where, f);
+      nodes.push(box);
+    });
+    if (t.snippets.length > SHOW) nodes.push(h("p", "more", `${plural(t.snippets.length - SHOW, "more span", "more spans")} not shown`));
+    if (d.coverage) {
+      const c = h("p", "coverage");
+      c.append(document.createTextNode(`Top ${d.coverage.k} cover `), h("b", "", `${Math.round(Math.min(1, d.coverage.recall) * 100)}%`),
+        document.createTextNode(" of the marked text"));
+      nodes.push(c);
+    }
+    body.replaceChildren(...nodes);
+  }
+
+  // --- запрос: кто ответил ------------------------------------------------------------------
+  function renderRequest(d, r, which) {
+    const kv = $("#request-kv"), t = r.timing_ms || {}, sb = r.served_by || {};
+    const rows = [["Round trip", `${fmtMs(d.elapsed_ms)} · ${d.stub ? "local stub" : "through the stand entry"}`]];
+    let svc = `embed ${fmtMs(t.embed)} · search ${fmtMs(t.search)}`;
+    if (which === "answer" && t.generate != null) svc += ` · write ${fmtMs(t.generate)}`;
+    rows.push(["Service", svc]);
+    rows.push(["Served by", [sb.node, sb.pod].filter(Boolean).join(" · ") || "n/a"]);
+    const route = r.qdrant_route === "local" ? "own peer on the same machine" : r.qdrant_route === "cluster" ? "cluster service" : "n/a";
+    const tries = r.qdrant_attempts > 1 ? ` · ${r.qdrant_attempts} attempts` : " · first try";
+    rows.push(["Qdrant", route + (r.qdrant_route ? tries : "")]);
+    rows.push(["Index", [r.collection, which === "search" ? r.model : null, r.mode].filter(Boolean).join(" · ") || "n/a"]);
+    if (which === "answer" && r.tokens && r.tokens.prompt != null) rows.push(["Tokens", `${r.tokens.prompt} in · ${r.tokens.output} out`]);
+    kv.replaceChildren(...rows.flatMap(([k, v]) => [h("dt", "", k), h("dd", "", v)]));
+    kv.hidden = false;
+    $("#request-empty").hidden = true;
+  }
+
+  // Правая колонка без данных этого запроса: старые ответы не остаются рядом с новым вопросом
+  function resetSide(requestNote) {
+    $("#truth").dataset.state = "idle";
+    $("#truth-meta").textContent = "";
+    $("#truth-body").replaceChildren(h("p", "side-empty", "The passage marked by lawyers shows here after a benchmark question."));
+    $("#request-kv").hidden = true;
+    const empty = $("#request-empty");
+    empty.hidden = false;
+    empty.textContent = requestNote;
+  }
+
+  function renderError(message, kind) {
+    resetSide("No reply to show.");
+    const card = h("div", "card error-card"), body = h("div");
+    body.append(document.createTextNode(message));
+    const hint = { tls: "Check the stand CA file", key: "Check the API key file", unreachable: "Is the stand up?",
+      timeout: "The stand may be under load", config: "Start the showcase server with the stand files" }[kind];
+    if (hint) body.append(h("small", "", hint));
+    card.append(body);
+    $("#answer").hidden = true;
+    $("#results").replaceChildren(card);
+    $("#res-note").textContent = "";
+    scene.dataset.match = "none";
+  }
+
+  // --- полоса качества и подписи из numbers.json ------------------------------------------
+  function renderQuality(v) {
+    const q = v && v.quality, box = $("#quality");
+    $("#caption").textContent = (v && v.caption) || "";
+    if (!q || !q.rows.length) { box.hidden = true; return; }
+    box.hidden = false;
+    $("#quality-title").textContent = [q.title, q.benchmark].filter(Boolean).join(" · ");
+    $("#quality-sub").textContent = [q.metric, q.search].filter(Boolean).join(" · ");
+    const rows = q.rows.map((row, i) => {
+      const el = h("div", "q-row" + (i ? " alt" : ""));
+      el.id = `quality-${row.id || i + 1}`;
+      const val = row.value == null ? h("span", "q-val pending", "pending") : h("span", "q-val", row.value + (row.unit === "%" ? "%" : row.unit ? " " + row.unit : ""));
+      const track = h("span", "q-track"), fill = h("i");
+      track.append(fill);
+      el.append(h("span", "q-name", row.label), val, track);
+      if (row.bar) requestAnimationFrame(() => fill.style.setProperty("width", row.bar));
+      return el;
+    });
+    $("#quality-rows").replaceChildren(...rows);
+    $("#quality-note").textContent = q.caveat || "";
+  }
+
+  function renderFooter() {
+    const el = $("#foot-right"), e = CFG?.entry;
+    if (CFG?.stub) { el.dataset.kind = "stub"; el.textContent = "Local stub · frozen vectors of the benchmark, no stand"; }
+    else if (e && e.ready) { el.dataset.kind = "live"; el.textContent = `Live service through the stand entry ${e.host}` + (e.tls ? " · TLS checked with the stand CA" : ""); }
+    else if (e) {
+      const why = { url: "entry address invalid", key: "API key file missing", ca: "stand CA file missing" }[e.problem];
+      el.dataset.kind = "bad";
+      el.textContent = "Stand entry not configured" + (why ? ` · ${why}` : "");
+    }
+    $("#sim").hidden = !CFG?.stub;
+  }
+
+  // --- автозапуск для съёмки ----------------------------------------------------------------
+  async function autoplay(text) {
+    qBox.value = "";
+    qBox.focus();
+    if (TYPE_MS > 0 && !STILL) {
+      await sleep(400);
+      for (const ch of text) {
+        qBox.value += ch;
+        qBox.scrollTop = qBox.scrollHeight;
+        await sleep(TYPE_MS);
+      }
+      onInput(true);
+      await sleep(250);
+      goBtn.classList.add("pressed");
+      await sleep(160);
+      goBtn.classList.remove("pressed");
+    } else {
+      qBox.value = text;
+      onInput(true);
+    }
+    return run();
+  }
+  function presetAt(n) {
+    const list = CFG?.presets || [], i = parseInt(n, 10);
+    return Number.isInteger(i) && i >= 1 && i <= list.length ? list[i - 1] : null;
+  }
+  function loadPreset(n, play) {
+    const p = presetAt(n);
+    if (!p) return false;
+    fillK(p.k);
+    resetView();
+    if (play) autoplay(p.query); else { qBox.value = p.query; onInput(true); }
+    return true;
+  }
+
+  // --- события ------------------------------------------------------------------------------
+  qBox.addEventListener("input", () => onInput(false));
+  qBox.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); run(); }
+  });
+  goBtn.addEventListener("click", () => run());
+  for (const b of document.querySelectorAll(".tab")) b.addEventListener("click", () => { if (b.dataset.tab !== tab) setTab(b.dataset.tab); });
+  document.addEventListener("keydown", (e) => {
+    if (e.target === qBox || e.target === kSel || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (/^[1-9]$/.test(e.key)) loadPreset(e.key, false);
+  });
+
+  // Для сценария записи и консоли: window.showcase.preset(2, true), .run(), .state
+  window.showcase = {
+    preset: (n, play) => loadPreset(n, !!play),
+    run: (q, k, which) => { if (which) setTab(which, true); if (k) fillK(k); if (q != null) { qBox.value = String(q); onInput(true); } return run(); },
+    get state() { return scene.dataset.state; },
+  };
+
+  async function boot() {
+    const [cfg, nums] = await Promise.allSettled([getJSON("/api/config", 8000), getJSON("/api/numbers", 8000)]);
+    CFG = cfg.status === "fulfilled" ? cfg.value.doc : null;
+    renderQuality(nums.status === "fulfilled" && nums.value.doc && nums.value.doc.ok ? nums.value.doc.view : null);
+    renderFooter();
+    const pre = presetAt(params.get("preset"));
+    setTab(tab, true);
+    fillK(params.get("k") ?? pre?.k);
+    resetView();
+    const q0 = params.get("q") ?? pre?.query ?? "";
+    if (q0 && params.get("autoplay") === "click") armOnClick(q0);
+    else if (q0 && flag("autoplay")) autoplay(q0);
+    else { qBox.value = q0; if (q0) onInput(true); }
+  }
+  // ?autoplay=click: поле пустое, пока по нему не щёлкнут; щелчок (в записи — настоящий клик
+  // web_perform.mjs) запускает набор вопроса и поиск. Момент задаёт сценарий записи, а не загрузка.
+  function armOnClick(text) {
+    qBox.value = "";
+    scene.dataset.armed = "yes";
+    const go = () => {
+      qBox.removeEventListener("pointerdown", go);
+      delete scene.dataset.armed;
+      autoplay(text);
+    };
+    qBox.addEventListener("pointerdown", go);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

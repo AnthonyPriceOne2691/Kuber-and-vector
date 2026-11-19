@@ -1,0 +1,54 @@
+{
+  "about": "Пресеты сцены поиска: вопросы мини-набора LegalBench-RAG с короткой читаемой разметкой. В адресе страницы ?preset=N, N с 1. По кэшу замера (точный поиск, cache/stage1/naive500_title) у каждого первым в выдаче идёт кусок, задевший разметку; на стенде поиск приближённый (HNSW), перед съёмкой сверить.",
+  "presets": [
+    {
+      "id": "supply-term",
+      "label": "Supply agreement · term",
+      "dataset": "cuad",
+      "k": 5,
+      "query": "Consider the Supply Agreement between Florida Chemical Company, LLC and Flotek Chemistry, LLC for Terpene Products; What is the expiration date of this contract?"
+    },
+    {
+      "id": "merger-knowledge",
+      "label": "Merger agreement · knowledge",
+      "dataset": "maud",
+      "k": 5,
+      "query": "Consider the Merger Agreement between \"Avangrid, Inc.\" and \"PNM Resources, Inc.\"; What is the Definition of \"Knowledge\""
+    },
+    {
+      "id": "nda-archival-copy",
+      "label": "NDA · archival copy",
+      "dataset": "contractnli",
+      "k": 5,
+      "query": "Consider the Mutual Non-Disclosure Agreement between IPTK and CO; Does the document permit the Receiving Party to retain some Confidential Information even after its return or destruction?"
+    },
+    {
+      "id": "privacy-delete",
+      "label": "Privacy policy · delete data",
+      "dataset": "privacy_qa",
+      "k": 5,
+      "query": "Consider \"TickTick: To Do List with Reminder, Day Planner\"'s privacy policy; can i delete my personally identifying information?"
+    },
+    {
+      "id": "merger-specific-performance",
+      "label": "Merger agreement · specific performance",
+      "dataset": "maud",
+      "k": 5,
+      "query": "Consider the Acquisition Agreement between Parent \"Columbia Banking System, Inc.\" and Target \"Bank of Commerce Holdings\"; Where is the Specific Performance clause"
+    },
+    {
+      "id": "nda-survival",
+      "label": "NDA · survives termination",
+      "dataset": "contractnli",
+      "k": 5,
+      "query": "Consider HNBA's Confidentiality Agreement; Does the document mention that some obligations of the Agreement may survive the termination of the Agreement?"
+    },
+    {
+      "id": "service-term",
+      "label": "Service agreement · term",
+      "dataset": "cuad",
+      "k": 5,
+      "query": "Consider the Service Agreement between BicycleTX Ltd and Nigel Crockett for Chief Business Officer Position; What is the expiration date of this contract?"
+    }
+  ]
+}

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numbers Board</title>
+<meta name="color-scheme" content="dark">
+<style>
+/* Доска чисел для финала ролика (2:50–3:00). В этом файле нет ни одного числа для кадра: все
+   строки приходят готовыми из /api/numbers (showcase/numbers.json через numbers.py). Нет значения —
+   «pending», а с hide_pending плитки нет вовсе. Токены цветов и шрифты те же, что у панели. */
+:root {
+  color-scheme: dark;
+  --page: #0b0e13;
+  --surface: #131820;
+  --surface-2: #1a2029;
+  --surface-3: #232a35;
+  --hairline: #252c37;
+  --axis: #3a4350;
+  --ink: #eef1f5;
+  --ink-2: #b9c1cd;
+  --muted: #818a99;
+  --good: #0ca30c;
+  --good-ink: #3ccf3c;
+  --warning: #fab219;
+  --p95: #8792a4;
+  --accent: #3987e5;
+  --sans: system-ui, -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--page); overflow: hidden; }
+body { color: var(--ink); font: 400 18px/1.3 var(--sans); -webkit-font-smoothing: antialiased; }
+[hidden] { display: none !important; }
+.still *, .still *::before, .still *::after { transition: none !important; animation: none !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+#stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0;
+  padding: 34px 40px 28px; display: grid; grid-template-rows: 80px 1fr 40px; row-gap: 22px; }
+header { display: flex; align-items: flex-end; justify-content: space-between; }
+.title { font-size: 42px; font-weight: 650; letter-spacing: -0.015em; }
+.subtitle { font-size: 21px; color: var(--ink-2); margin-top: 6px; }
+
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 18px; min-height: 0; }
+.tile { container-type: size; background: var(--surface); border: 1px solid var(--hairline); border-radius: 16px;
+  padding: 20px 24px 18px; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
+  position: relative; transition: opacity .5s ease, transform .5s ease; transition-delay: var(--d, 0ms); }
+.tile.enter { opacity: 0; transform: translateY(10px); }
+.tile > * { flex-shrink: 0; }
+.tile.wide { grid-column: span 2; }
+.tile::before { content: ""; position: absolute; left: 0; top: 0; right: 0; height: 4px; background: var(--axis); }
+.tile[data-tone="good"]::before { background: var(--good); }
+.tile.quality::before { background: var(--accent); }
+.tile[data-state="pending"] { background: transparent; border-style: dashed; border-color: var(--axis); }
+.tile[data-state="pending"]::before { display: none; }
+.label { font-size: 15px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hero { margin-top: 8px; font-size: clamp(48px, 24cqh, 132px); font-weight: 650; line-height: 1; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hero .pre { color: var(--ink-2); margin-right: .08em; }
+.hero .of { color: var(--ink-2); font-weight: 500; }
+.tile[data-tone="good"] .hero .num { color: var(--good-ink); }
+.hero.pending { font-size: clamp(30px, 14cqh, 54px); font-weight: 600; letter-spacing: 0; color: var(--muted); margin-top: 14px; }
+.unit { margin-top: 6px; font-size: 21px; color: var(--ink-2); line-height: 1.25; }
+.tile[data-state="pending"] .unit { color: var(--muted); font-size: 18px; }
+.facts { margin-top: auto; padding-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.fact { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; font-size: 17px; line-height: 1.25; }
+.fact dt { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.fact dd { color: var(--ink); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fact.pending dd { color: var(--muted); font-weight: 500; }
+.note { margin-top: 10px; font-size: 16px; color: var(--muted); line-height: 1.35; }
+
+/* плитка качества: большое число, полосы «наш способ / статья», оговорка */
+.q-body { display: grid; grid-template-columns: auto 1fr; column-gap: 40px; align-items: end; margin-top: 8px; flex: 1; min-height: 0; }
+.q-hero .hero { margin-top: 0; color: var(--ink); }
+.q-hero .unit { max-width: 360px; }
+.bars { display: flex; flex-direction: column; gap: 16px; padding-bottom: 6px; min-width: 0; }
+.bar { display: grid; grid-template-columns: 1fr auto; align-items: baseline; row-gap: 7px; }
+.bar .name { font-size: 18px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .val { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.bar .val.pending { font-size: 18px; color: var(--muted); font-weight: 500; }
+.track { grid-column: 1 / -1; height: 12px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+.track i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 6px; transition: width 1.1s ease .2s; }
+.bar.alt .track i { background: var(--p95); }
+
+footer { display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--ink-2); white-space: nowrap; }
+.banner { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--surface-3);
+  border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--hairline)); border-radius: 12px; padding: 14px 22px;
+  font-size: 20px; color: var(--ink); }
+.banner::before { content: "▲ "; color: var(--warning); }
+</style>
+</head>
+<body>
+<div id="stage" data-state="loading">
+  <header>
+    <div>
+      <div class="title" id="title"></div>
+      <div class="subtitle" id="subtitle"></div>
+    </div>
+  </header>
+  <main class="grid" id="grid"></main>
+  <footer><span id="caption"></span></footer>
+  <div class="banner" id="banner" hidden>Numbers file is not readable</div>
+</div>
+<script>
+// Доска чисел: строки из /api/numbers, только textContent. Файл numbers.json перечитывается
+// раз в пару секунд: впишешь замер — плитка обновится сама. ?still — без анимаций и без опроса.
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const params = new URLSearchParams(location.search);
+  const STILL = params.has("still") || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (STILL) document.documentElement.classList.add("still");
+  // Числа в коде страницы только служебные (такт опроса, задержка появления плиток), в кадр не идут
+  const REFRESH_MS = 2000, STAGGER_MS = 60;
+
+  const stage = $("#stage");
+  function fit() {
+    const scale = Math.min(innerWidth / 1920, innerHeight / 1080) || 1;
+    const x = (innerWidth - 1920 * scale) / 2, y = (innerHeight - 1080 * scale) / 2;
+    stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }
+  addEventListener("resize", fit);
+  fit();
+
+  function h(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  const withUnit = (value, unit) => value + (unit === "%" ? "%" : unit ? " " + unit : "");
+
+  function statTile(t) {
+    const el = h("section", "tile" + (t.wide ? " wide" : ""));
+    el.id = "tile-" + t.id;
+    el.dataset.state = t.state;
+    el.dataset.tone = t.tone || "neutral";
+    el.append(h("div", "label", t.title));
+    if (t.state === "pending") {
+      el.append(h("div", "hero pending", "pending"));
+    } else {
+      const hero = h("div", "hero");
+      if (t.prefix) hero.append(h("span", "pre", t.prefix));
+      hero.append(h("span", "num", t.value));
+      if (t.of) hero.append(h("span", "of", "/" + t.of));
+      el.append(hero);
+    }
+    if (t.unit) el.append(h("div", "unit", t.unit));
+    if (t.facts && t.facts.length) {
+      const dl = h("dl", "facts");
+      for (const f of t.facts) {
+        const row = h("div", "fact" + (f.state === "pending" ? " pending" : ""));
+        row.append(h("dt", "", f.label), h("dd", "", f.state === "pending" ? "pending" : (f.prefix || "") + withUnit(f.value, f.unit)));
+        dl.append(row);
+      }
+      el.append(dl);
+    }
+    if (t.note) el.append(h("div", "note", t.note));
+    return el;
+  }
+
+  function qualityTile(q, t) {
+    const el = h("section", "tile quality" + (t.wide ? " wide" : ""));
+    el.id = "tile-" + t.id;
+    el.dataset.state = q.state;
+    el.append(h("div", "label", [q.title, q.benchmark].filter(Boolean).join(" · ")));
+    const lead = q.rows.find((r) => r.value != null);
+    const body = h("div", "q-body"), left = h("div", "q-hero"), bars = h("div", "bars");
+    if (lead) {
+      const hero = h("div", "hero");
+      hero.append(h("span", "num", withUnit(lead.value, q.unit)));
+      left.append(hero, h("div", "unit", [q.metric, q.search].filter(Boolean).join(" · ")));
+    } else {
+      left.append(h("div", "hero pending", "pending"), h("div", "unit", [q.metric, q.search].filter(Boolean).join(" · ")));
+    }
+    q.rows.forEach((r, i) => {
+      const bar = h("div", "bar" + (i ? " alt" : ""));
+      bar.id = "quality-" + (r.id || "row");
+      const val = r.value == null ? h("span", "val pending", "pending") : h("span", "val", withUnit(r.value, q.unit));
+      const track = h("span", "track"), fill = h("i");
+      track.append(fill);
+      bar.append(h("span", "name", r.label), val, track);
+      if (r.bar) requestAnimationFrame(() => requestAnimationFrame(() => fill.style.setProperty("width", r.bar)));
+      bars.append(bar);
+    });
+    body.append(left, bars);
+    el.append(body);
+    if (q.caveat) el.append(h("div", "note", q.caveat));
+    return el;
+  }
+
+  let lastKey = "";
+  function render(v) {
+    const key = JSON.stringify(v);
+    if (key === lastKey) return;
+    const first = !lastKey;
+    lastKey = key;
+    $("#title").textContent = v.title || "";
+    $("#subtitle").textContent = v.subtitle || "";
+    $("#caption").textContent = v.caption || "";
+    const tiles = (v.tiles || []).map((t) => (t.kind === "quality" ? (v.quality ? qualityTile(v.quality, t) : null) : statTile(t))).filter(Boolean);
+    $("#grid").replaceChildren(...tiles);
+    if (first && !STILL) {
+      tiles.forEach((el, i) => { el.classList.add("enter"); el.style.setProperty("--d", String(i * STAGGER_MS) + "ms"); });
+      requestAnimationFrame(() => requestAnimationFrame(() => tiles.forEach((el) => el.classList.remove("enter"))));
+    }
+  }
+
+  async function load() {
+    try {
+      const r = await fetch("/api/numbers", { cache: "no-store" });
+      const d = await r.json();
+      if (!d.ok || !d.view) throw new Error("bad numbers");
+      render(d.view);
+      $("#banner").hidden = true;
+      stage.dataset.state = "ready";
+    } catch (e) {
+      $("#banner").hidden = false;
+      if (stage.dataset.state !== "ready") stage.dataset.state = "error";
+    }
+    if (!STILL) setTimeout(load, REFRESH_MS);
+  }
+  load();
+})();
+</script>
+</body>
+</html>

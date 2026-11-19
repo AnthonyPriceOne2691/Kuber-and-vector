@@ -1,0 +1,93 @@
+{
+  "about": "Числа для доски ролика (2:50–3:00) и полосы качества на странице поиска. Только замеры 19.11.2026 на пересобранном стенде; null значит «не измерено», на экране pending. Строки идут в кадр по-английски. Формат описан в showcase/numbers.py.",
+  "schema": "showcase-numbers/1",
+  "measured_on": "2026-11-19",
+  "title": "Kubernetes + Qdrant",
+  "subtitle": "Measured on the stand · 19 Nov 2026",
+  "caption": "3 VMs + observer on one laptop · numbers for this hardware",
+  "hide_pending": false,
+  "quality": {
+    "title": "Retrieval quality",
+    "benchmark": "LegalBench-RAG mini",
+    "metric": "recall@64",
+    "search": "exact search",
+    "unit": "%",
+    "rows": [
+      {"id": "ours", "label": "Our chunks with document title", "value": 82.6},
+      {"id": "paper", "label": "Paper baseline", "value": 63.5}
+    ],
+    "caveat": "Our chunks carry the document title. The paper's baseline does not."
+  },
+  "tiles": [
+    {"id": "quality", "kind": "quality", "wide": true},
+    {
+      "id": "one-machine-off",
+      "title": "One machine off under load",
+      "value": 0,
+      "unit": "errors seen by users",
+      "tone": "good",
+      "facts": [
+        {"label": "requests", "value": 2656},
+        {"label": "retried", "value": 1}
+      ]
+    },
+    {
+      "id": "two-machines-off",
+      "title": "Two of three machines off",
+      "value": 0,
+      "unit": "errors seen by users",
+      "tone": "good",
+      "facts": [
+        {"label": "requests", "value": 1586}
+      ]
+    },
+    {
+      "id": "writes-during-failure",
+      "title": "Writes during the failure",
+      "value": 0,
+      "unit": "writes lost",
+      "tone": "good",
+      "facts": [
+        {"label": "acknowledged", "value": 1489}
+      ]
+    },
+    {
+      "id": "infected-pod",
+      "title": "Infected pod",
+      "value": 14,
+      "of": 14,
+      "unit": "attacks blocked",
+      "tone": "good",
+      "facts": [
+        {"label": "Falco alert after the shell starts", "prefix": "< ", "value": 1, "unit": "ms"},
+        {"label": "syscall to alert, median", "value": 1, "unit": "ms"},
+        {"label": "syscall to alert, max", "value": 11, "unit": "ms"},
+        {"label": "alerts timed", "value": 15}
+      ]
+    },
+    {
+      "id": "port-scan",
+      "title": "Port scan from outside",
+      "value": 1,
+      "unit": "open port",
+      "facts": [
+        {"label": "TCP ports scanned", "value": 262140},
+        {"label": "the open one, HTTPS on the entry", "value": 443}
+      ]
+    },
+    {
+      "id": "image-scan",
+      "title": "Image scan with trivy",
+      "value": 0,
+      "unit": "critical vulnerabilities",
+      "tone": "good",
+      "facts": [
+        {"label": "images scanned", "value": 7}
+      ]
+    },
+    {"id": "full-corpus", "title": "Full corpus", "value": null, "unit": "chunks searchable"},
+    {"id": "latency-p95", "title": "Latency under load", "value": null, "unit": "ms p95"},
+    {"id": "vector-limit", "title": "Vector limit", "value": null, "unit": "vectors on the stand"},
+    {"id": "model-answer", "title": "Model answer", "value": null, "unit": "answers with a verified quote"}
+  ]
+}
