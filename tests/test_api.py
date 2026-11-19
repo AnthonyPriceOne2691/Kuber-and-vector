@@ -260,11 +260,11 @@ class AnswerEndpointTest(StandTest):
 
     def test_model_failures(self):
         r = self.ask("this is not json")
-        self.assertEqual((r.status_code, r.json()["error"]), (502, "модель ответила не по формату"))
+        self.assertEqual((r.status_code, r.json()["error"]), (502, "model reply is not in the expected format"))
         r = self.ask(chat_status=429)
-        self.assertEqual((r.status_code, r.json()["error"]), (429, "модель занята, повторите позже"))
+        self.assertEqual((r.status_code, r.json()["error"]), (429, "model is busy, try again later"))
         r = self.ask(chat_status=500)
-        self.assertEqual((r.status_code, r.json()["error"]), (503, "модель недоступна"))
+        self.assertEqual((r.status_code, r.json()["error"]), (503, "model unavailable"))
 
     def test_no_hits_no_model_call(self):
         self.qdrant.handler = qdrant_handler([])

@@ -72,9 +72,25 @@ class EmbedTest(FilterTest):
         self.assertEqual((code, len(body["embeddings"])), (200, 3))
 
     def test_other_model_denied(self):
-        code, _ = self.send("/api/embed", {"model": "nomic-embed-text", "input": "x"})
-        self.assertEqual(code, 403)
+        for model in ("nomic-embed-text", "qwen3:8b", "snowflake-arctic-embed2:568m", "bge-m3:other", None, 5):
+            code, _ = self.send("/api/embed", {"model": model, "input": "x"})
+            self.assertEqual(code, 403, model)
         self.assertEqual(self.upstream.requests, [])
+
+    def test_second_embed_model_passes_under_its_own_name(self):
+        """Сцена смены модели: snowflake-arctic-embed2 пускаем, и наверх уходит именно она."""
+        code, body = self.send("/api/embed", {"model": "snowflake-arctic-embed2", "input": ["query: hello", "doc"]})
+        self.assertEqual((code, len(body["embeddings"])), (200, 2))
+        code, _ = self.send("/api/embed", {"model": "snowflake-arctic-embed2:latest", "input": "x", "keep_alive": -1})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.upstream.json_bodies(), [
+            {"model": "snowflake-arctic-embed2", "input": ["query: hello", "doc"], "truncate": True},
+            {"model": "snowflake-arctic-embed2", "input": ["x"], "truncate": True}])
+
+    def test_every_model_with_a_query_prefix_is_allowed(self):
+        """Модели из app/embed_models.py сервис может получить из реестра: фильтр должен их пускать."""
+        from app import embed_models
+        self.assertEqual(sorted(embed_models.QUERY_PREFIX), sorted(flt.EMBED_MODELS))
 
     def test_input_limits(self):
         cases = [[], [""], ["x" * (flt.MAX_CHARS + 1)], ["x"] * (flt.MAX_INPUTS + 1), [1], "", None]
@@ -148,7 +164,7 @@ class ChatTest(FilterTest):
         self.assertEqual(self.send("/api/chat", chat_request(options={"num_predict": 100000}))[0], 400)
 
     def test_other_models_denied(self):
-        for model in ("qwen3:14b", "bge-m3", "llama3"):
+        for model in ("qwen3:14b", "bge-m3", "snowflake-arctic-embed2", "llama3"):
             self.assertEqual(self.send("/api/chat", chat_request(model=model))[0], 403, model)
         self.assertEqual(self.upstream.requests, [])
 

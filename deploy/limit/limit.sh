@@ -113,8 +113,14 @@ current_collection() {
   kc -n search get deploy search -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="COLLECTION")].value}'
 }
 
-use_collection() {  # $1 коллекция для сервиса поиска; поды сменяются по одному, поиск не прерывается
-  kc -n search set env deploy/search "COLLECTION=$1" >/dev/null
+current_alias() {
+  kc -n search get deploy search -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SEARCH_ALIAS")].value}'
+}
+
+# $1 коллекция для сервиса поиска, $2 алиас (пусто: без алиаса, ровно эта коллекция; на synth_* алиас
+# выключен, иначе сервис ушёл бы по нему на рабочую коллекцию); поды сменяются по одному, поиск не прерывается
+use_collection() {
+  kc -n search set env deploy/search "COLLECTION=$1" "SEARCH_ALIAS=${2:-}" >/dev/null
   kc -n search rollout status deploy/search --timeout=300s >/dev/null
 }
 
@@ -128,14 +134,20 @@ latest_prev() {  # на какой коллекции был поиск до п�
   if [ -n "$f" ]; then cat "$f"; else echo contracts_rf2; fi
 }
 
-SWITCHED=""; DONE=""; OUT=""; PREV=""; ENTRY=""
+latest_prev_alias() {  # с каким алиасом был поиск до последнего прогона (пусто: без алиаса)
+  local f
+  f=$(ls -t "$ROOT"/runs/limit/*/previous-collection 2>/dev/null | head -1 || true)
+  if [ -n "$f" ] && [ -f "$(dirname "$f")/previous-alias" ]; then cat "$(dirname "$f")/previous-alias"; fi
+}
+
+SWITCHED=""; DONE=""; OUT=""; PREV=""; PREV_ALIAS=""; ENTRY=""
 finish() {
   local code=$?
   trap - EXIT INT TERM
   set +e
   if [ -n "$SWITCHED" ]; then
     mark "поиск обратно на $PREV"
-    use_collection "$PREV" || echo "  поиск не вернулся на $PREV: deploy/limit/limit.sh clean"
+    use_collection "$PREV" "$PREV_ALIAS" || echo "  поиск не вернулся на $PREV: deploy/limit/limit.sh clean"
   fi
   m4_stop
   m1_stop
@@ -164,14 +176,17 @@ run_all() {
   # куда вернуть поиск, узнаём до ловушки: если он уже на synth_*, ловушка не должна удалить его коллекцию
   if [ -f "$OUT/previous-collection" ]; then
     PREV=$(cat "$OUT/previous-collection")
+    PREV_ALIAS=$(cat "$OUT/previous-alias" 2>/dev/null || true)
   else
     PREV=$(current_collection)
+    PREV_ALIAS=$(current_alias)
     case "$PREV" in
       ""|synth_*) echo "поиск сейчас на «$PREV», а не на рабочей коллекции: сначала deploy/limit/limit.sh clean"; exit 1 ;;
     esac
   fi
   mkdir -p "$OUT"
   [ -f "$OUT/previous-collection" ] || echo "$PREV" > "$OUT/previous-collection"
+  [ -f "$OUT/previous-alias" ] || echo "$PREV_ALIAS" > "$OUT/previous-alias"
   [ -f "$OUT/stages.txt" ] || echo "$STAGES" > "$OUT/stages.txt"
   if [ "$ON_DISK" = 1 ]; then DISK="--on-disk"; else DISK=""; fi
   echo "замер предела: $COLL ($SHARDS шардов по $REPLICAS копии), ступени $STAGES, темпы $RATES в секунду"
@@ -222,7 +237,7 @@ run_all() {
     if [ -z "$SWITCHED" ]; then
       mark "сервис поиска переключается на $COLL"
       SWITCHED=1
-      use_collection "$COLL"
+      use_collection "$COLL" ""
     fi
     mark "ступень $n: лестница нагрузки"
     stage_qps "$n"
@@ -231,7 +246,7 @@ run_all() {
 
   if [ -n "$SWITCHED" ]; then
     mark "поиск обратно на $PREV"
-    use_collection "$PREV"
+    use_collection "$PREV" "$PREV_ALIAS"
     SWITCHED=""
   fi
   "$PY" -I -B "$ROOT/eval/limit_report.py" "$OUT" --out "$ROOT/eval/results/limit.md"
@@ -245,7 +260,7 @@ case "${1:-}" in
     prepare_m1
     trap 'limactl shell machine-1 sudo rm -rf "$REMOTE" >/dev/null 2>&1' EXIT
     synth read-only-api-key snapshot
-    echo "  поиск ходит в коллекцию: $(current_collection)" ;;
+    echo "  поиск ходит в коллекцию: $(current_collection), алиас: $(current_alias)" ;;
   clean)
     cur=$(current_collection)
     case "$cur" in
@@ -253,7 +268,7 @@ case "${1:-}" in
         prev=$(latest_prev)
         case "$prev" in ""|synth_*) prev=contracts_rf2 ;; esac
         echo "поиск ходит в $cur, возвращаю на $prev"
-        use_collection "$prev" ;;
+        use_collection "$prev" "$(latest_prev_alias)" ;;
     esac
     m4_stop
     m1_stop
