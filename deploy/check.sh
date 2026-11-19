@@ -7,6 +7,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 PY=/opt/homebrew/bin/python3
 CA="$ROOT/runs/stand-ca.pem"
+KEYH="$ROOT/runs/entry-api-key.header"  # «X-API-Key: …», пишет deploy/observer/install.sh
 pass=0; fail=0
 check() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then echo "  ✓ $name"; pass=$((pass+1)); else echo "  ✗ $name"; fail=$((fail+1)); fi; }
 not() { ! "$@"; }
@@ -23,18 +24,24 @@ check "три пода поиска на трёх машинах" bash -c "[ \$(
 check "Falco на трёх машинах" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n falco get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
 
 echo "поиск через вход https://$ENTRY"
-check "TLS проверяется по УЦ стенда, ответ с адресами" bash -c "curl -sf --cacert '$CA' 'https://$ENTRY/search?q=$Q&k=3' | $PY -I -c 'import json,sys; r=json.load(sys.stdin)[\"results\"]; assert r and all(\"span\" in x for x in r)'"
+check "TLS проверяется по УЦ стенда, ответ с адресами" bash -c "curl -sf --cacert '$CA' -H @'$KEYH' 'https://$ENTRY/search?q=$Q&k=3' | $PY -I -c 'import json,sys; r=json.load(sys.stdin)[\"results\"]; assert r and all(\"span\" in x for x in r)'"
 check "без УЦ стенда curl отказывается (сертификат не публичный)" not curl -sf "https://$ENTRY/healthz"
 check "POST запрещён (405)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' -X POST 'https://$ENTRY/search') = 405 ]"
 check "чужой путь закрыт (404)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' 'https://$ENTRY/docs') = 404 ]"
 check "порт 80 на входе закрыт" not curl -s -m 3 "http://$ENTRY/"
 if [ "${CHECK_ANSWER:-0}" = 1 ]; then  # грузит qwen3:8b на Маке (около 6 ГБ, оценка), поэтому по запросу
-  check "ответ модели через вход: статус и ссылки" bash -c "curl -sf -m 150 --cacert '$CA' 'https://$ENTRY/answer?q=$Q&k=5' | $PY -I -c 'import json,sys; r=json.load(sys.stdin); assert r[\"status\"] in (\"answered\",\"refused\",\"unsupported\"); assert r[\"status\"] != \"answered\" or any(c[\"verified\"] for c in r[\"citations\"])'"
+  check "ответ модели через вход: статус и ссылки" bash -c "curl -sf -m 150 --cacert '$CA' -H @'$KEYH' 'https://$ENTRY/answer?q=$Q&k=5' | $PY -I -c 'import json,sys; r=json.load(sys.stdin); assert r[\"status\"] in (\"answered\",\"refused\",\"unsupported\"); assert r[\"status\"] != \"answered\" or any(c[\"verified\"] for c in r[\"citations\"])'"
 fi
 served=$(for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  curl -s --cacert "$CA" "https://$ENTRY/search?q=$Q&k=1" | $PY -I -c 'import json,sys; print(json.load(sys.stdin)["served_by"]["node"])' 2>/dev/null
+  curl -s --cacert "$CA" -H @"$KEYH" "https://$ENTRY/search?q=$Q&k=1" | $PY -I -c 'import json,sys; print(json.load(sys.stdin)["served_by"]["node"])' 2>/dev/null
 done | sort | uniq -c | tr '\n' ' ')
 echo "    кто ответил на 12 запросов: $served"
+code() { curl -s -o /dev/null -w '%{http_code}' --cacert "$CA" "$@"; }
+check "без ключа API 401" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' 'https://$ENTRY/search?q=$Q') = 401 ]"
+check "чужой ключ API 401" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' -H 'X-API-Key: guess' 'https://$ENTRY/search?q=$Q') = 401 ]"
+# последняя проверка входа: после неё адрес Мака около 10 с получает 429 на всё
+last=""; for i in $(seq 1 15); do last=$(code -H "X-API-Key: guess-$i" "https://$ENTRY/search?q=$Q"); done
+check "перебор ключей получает 429" [ "$last" = 429 ]
 
 echo "песочница машин (на machine-1)"
 check "интернета нет" not limactl shell machine-1 curl -s -m 5 -o /dev/null https://example.com

@@ -342,10 +342,13 @@ class Endpoint:
     """Одна цель (URL) с пулом соединений keep-alive."""
 
     def __init__(self, url: str, ssl_ctx: ssl.SSLContext | None = None, keepalive: bool = True,
-                 max_idle: float = 4.0) -> None:
+                 max_idle: float = 4.0, api_key: str | None = None) -> None:
         u = urllib.parse.urlsplit(url)
         if u.scheme not in ("http", "https") or not u.hostname:
             raise ValueError(f"нужен URL http(s)://хост/путь, получено: {url!r}")
+        if api_key is not None and (not api_key or any(c in api_key for c in "\r\n\0")):
+            raise ValueError("ключ API пустой или с переводом строки")
+        self.api_key = api_key  # вход стенда пускает к поиску только с заголовком X-API-Key
         self.host = u.hostname
         self.port = u.port or (443 if u.scheme == "https" else 80)
         self.tls = (ssl_ctx or ssl.create_default_context()) if u.scheme == "https" else None
@@ -362,8 +365,9 @@ class Endpoint:
     def _request(self, query: str) -> bytes:
         qs = f"{self.base_query}&{query}" if self.base_query else query
         conn = "keep-alive" if self.keepalive else "close"
+        key = f"X-API-Key: {self.api_key}\r\n" if self.api_key else ""
         return (f"GET {self.path}?{qs} HTTP/1.1\r\nHost: {self.host_header}\r\n"
-                f"User-Agent: stand-loadgen/1\r\nAccept: application/json\r\n"
+                f"User-Agent: stand-loadgen/1\r\nAccept: application/json\r\n{key}"
                 f"Connection: {conn}\r\n\r\n").encode("latin-1")
 
     async def _acquire(self):
@@ -459,7 +463,7 @@ class LoadGen:
     def __init__(self, targets: list[str], questions: list[str], stats: Stats, rate: float = 10.0,
                  concurrency: int = 32, timeout: float = 2.0, retry: str = "other", k: int = 5,
                  arrival: str = "uniform", fetch=None, ssl_ctx: ssl.SSLContext | None = None,
-                 keepalive: bool = True, seed: int | None = None) -> None:
+                 keepalive: bool = True, seed: int | None = None, api_key: str | None = None) -> None:
         if retry not in ("none", "other"):
             raise ValueError("retry: none или other")
         if not targets:
@@ -477,7 +481,7 @@ class LoadGen:
         self.arrival = arrival
         self._endpoints = None
         if fetch is None:
-            self._endpoints = [Endpoint(u, ssl_ctx, keepalive) for u in self.targets]
+            self._endpoints = [Endpoint(u, ssl_ctx, keepalive, api_key=api_key) for u in self.targets]
             self.targets = [e.url for e in self._endpoints]
             fetch = self._fetch_http
         self.fetch = fetch
@@ -601,9 +605,13 @@ async def main_async(args: argparse.Namespace) -> int:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
     stats = Stats(smooth_s=args.smooth)
+    api_key = None
+    if args.api_key_file:  # ключ из файла, а не из аргумента: в списке процессов его не видно
+        with open(args.api_key_file, encoding="utf-8") as f:
+            api_key = f.read().strip()
     gen = LoadGen(args.url, questions, stats, rate=args.rate, concurrency=args.concurrency,
                   timeout=args.timeout, retry=args.retry, k=args.k, arrival=args.arrival,
-                  ssl_ctx=ctx, keepalive=not args.no_keepalive)
+                  ssl_ctx=ctx, keepalive=not args.no_keepalive, api_key=api_key)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -667,6 +675,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--duration", type=float, default=0, help="остановиться через N секунд (0 — работать)")
     ap.add_argument("--cafile", help="свой корневой сертификат для https")
     ap.add_argument("--insecure", action="store_true", help="не проверять сертификат (только для стенда)")
+    ap.add_argument("--api-key-file", help="файл с ключом API входа (заголовок X-API-Key)")
     ap.add_argument("--no-keepalive", action="store_true", help="новое соединение на каждый запрос")
     ap.add_argument("--quiet", action="store_true", help="не печатать сводку каждые 5 с")
     args = ap.parse_args(argv)

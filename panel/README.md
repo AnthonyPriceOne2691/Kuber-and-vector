@@ -59,7 +59,7 @@ Mock подменяет только транспорт: отдаёт JSON ка�
 
 ```bash
 python3 -I -B panel/loadgen.py \
-  --url https://127.0.0.1/search --cafile /etc/stand/ca.pem \
+  --url https://127.0.0.1/search --cafile /etc/stand/ca.pem --api-key-file /etc/stand/api-key \
   --rate 25 --concurrency 64 --timeout 2 --retry other \
   --questions panel/questions.txt --stats-file /run/user/$(id -u)/panel-load.json
 ```
@@ -70,6 +70,7 @@ python3 -I -B panel/loadgen.py \
 | `--rate` | 20 | запросов в секунду, ровно (open loop: темп не зависит от ответов) |
 | `--concurrency` | 64 | потолок одновременных запросов; сверх него запрос не уходит и считается `skipped` |
 | `--timeout` | 2 | таймаут одной попытки, с |
+| `--api-key-file` | — | файл с ключом API входа; уходит заголовком `X-API-Key` (без ключа вход отвечает 401) |
 | `--retry` | `other` | `none` — без повтора; `other` — один повтор на другую цель (если цель одна — на неё же) |
 | `--questions` | `panel/questions.txt` | вопросы по строке; `#` и пустые строки пропускаются; 3–500 знаков |
 | `--k` | 5 | сколько результатов просить |

@@ -161,6 +161,15 @@ class HTTPParsingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             Endpoint("ftp://h/s")
 
+    def test_endpoint_api_key(self):
+        req = Endpoint("https://entry/search", api_key="k123")._request("q=a").decode("latin-1")
+        self.assertIn("\r\nX-API-Key: k123\r\n", req)
+        self.assertTrue(req.endswith("\r\n\r\n"))
+        self.assertNotIn("X-API-Key", Endpoint("https://entry/search")._request("q=a").decode("latin-1"))
+        for bad in ("", "k\r\nX-Evil: 1", "k\n"):  # заголовок не подделать переводом строки
+            with self.assertRaises(ValueError):
+                Endpoint("https://entry/search", api_key=bad)
+
 
 class _Search(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"

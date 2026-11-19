@@ -69,6 +69,13 @@ if [ ! -f "$C/stand.pem" ] || ! openssl x509 -in "$C/stand.pem" -noout -ext subj
 fi
 install -m 0644 "$C/ca.pem" /tmp/stand-ca.pem
 
+# ключи API входа: строка «ключ имя»; HAProxy читает файл при старте, ещё до chroot
+KEYS=/etc/haproxy/api-keys.map
+if [ ! -s "$KEYS" ]; then
+  ( umask 027; printf '%s demo\n' "$(openssl rand -hex 24)" > "$KEYS" )
+  chgrp haproxy "$KEYS"
+fi
+
 install -m 0644 /tmp/haproxy.cfg /etc/haproxy/haproxy.cfg && rm -f /tmp/haproxy.cfg
 haproxy -c -q -f /etc/haproxy/haproxy.cfg
 systemctl enable -q haproxy
@@ -79,4 +86,9 @@ echo "серверы:"; curl -s 'http://127.0.0.1:8404/stats;csv' | awk -F, 'NR>
 EOS
 limactl copy "$VM:/tmp/stand-ca.pem" "$ROOT/runs/stand-ca.pem"
 limactl shell "$VM" sudo rm -f /tmp/stand-ca.pem
-echo "вход: https://$ENTRY  (УЦ стенда: runs/stand-ca.pem)"
+# ключ демо-клиента на Мак (runs/ в git не идёт): для check.sh, генератора нагрузки и curl
+( umask 077
+  limactl shell "$VM" sudo awk 'NR==1 {print $1}' /etc/haproxy/api-keys.map > "$ROOT/runs/entry-api-key"
+  printf 'X-API-Key: %s\n' "$(cat "$ROOT/runs/entry-api-key")" > "$ROOT/runs/entry-api-key.header" )
+[ -s "$ROOT/runs/entry-api-key" ] || { echo "ключ API не получен"; exit 1; }
+echo "вход: https://$ENTRY  (УЦ стенда: runs/stand-ca.pem, ключ API: runs/entry-api-key)"
