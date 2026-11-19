@@ -1,11 +1,23 @@
 # Образ сервиса поиска. Собирается без сети (buildah --network none):
 # база python:3.13-slim и колёса Python из комплекта, хэши колёс сверяет pip.
+# После установки колёс pip из образа удаляется: сервису (uvicorn, fastapi) он в работе не нужен,
+# а в pip вшиты свои msgpack, urllib3 и setuptools, на них пришлись 5 из 6 исправимых HIGH у trivy
+# (прогон 19.11). setuptools и wheel в базе 3.13 нет, но если появятся, удаляются вместе с ним; pip
+# снимает себя последним. Копию pip в стандартной библиотеке (ensurepip/_bundled) тоже убираем:
+# в ней те же вшитые пакеты, а ставить пакеты в работающий образ некому. Удаление проверяется тут же:
+# import pip должен падать, а сервис и шлюз Qdrant (тот же образ) должны импортироваться.
+# Байты pip остаются в слое базы, но в файловой системе образа их нет: её и видят контейнер и trivy.
 FROM docker.io/library/python:3.13-slim
 
 COPY wheels/ /tmp/wheels/
 RUN python -m pip install --no-index --no-cache-dir --require-hashes \
         --find-links /tmp/wheels -r /tmp/wheels/requirements.lock \
  && rm -rf /tmp/wheels \
+ && python -m pip uninstall -y --no-input --disable-pip-version-check --root-user-action=ignore \
+        setuptools wheel pip \
+ && find /usr/local/lib -path '*/ensurepip/_bundled/*.whl' -type f -delete \
+ && ! python -c 'import pip' 2>/dev/null \
+ && python -c 'import fastapi, httpx, uvicorn, http.server' \
  && useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin search
 
 COPY app/ /srv/app/
