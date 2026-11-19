@@ -1,0 +1,49 @@
+# Учётная запись панели на machine-4: только чтение того, что читает panel/sources.py (KUBE_LISTS):
+#   GET /api/v1/nodes, GET /api/v1/pods (все пространства: системные поды на карточке машины
+#   и поды без узла), GET /apis/coordination.k8s.io/v1/namespaces/kube-node-lease/leases (пульс kubelet).
+# Панель делает только list; get и watch дают те же объекты и новых данных не открывают.
+# Подресурсы не входят: pods/log, pods/exec, pods/portforward, nodes/proxy закрыты. Secrets,
+# configmaps и любая запись закрыты. Ставит deploy/panel/install.sh, он же выпускает токен
+# (TokenRequest, срок TOKEN_TTL): токен в Secret не хранится и в под не монтируется.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stand-panel
+  labels:
+    # подов здесь нет и не будет; если появятся, только restricted
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: panel-reader, namespace: stand-panel}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: stand-panel-read}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: stand-panel-read}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: stand-panel-read}
+subjects: [{kind: ServiceAccount, name: panel-reader, namespace: stand-panel}]
+---
+# аренды kubelet только в kube-node-lease: аренды контроллеров в kube-system панели не нужны
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: stand-panel-leases, namespace: kube-node-lease}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: stand-panel-leases, namespace: kube-node-lease}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: stand-panel-leases}
+subjects: [{kind: ServiceAccount, name: panel-reader, namespace: stand-panel}]

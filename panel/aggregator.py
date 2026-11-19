@@ -13,6 +13,9 @@ observer (службы machine-4), events (лента и POST /api/event для 
 
     python3 -I -B panel/aggregator.py --mock            # на Маке, без кластера
     open http://127.0.0.1:8090/
+
+На стенде — служба systemd на machine-4 (deploy/panel/install.sh): страница только на
+127.0.0.1, события Falco принимает второй адрес (--event-bind), только POST /api/event с токеном.
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ import math
 import os
 import re
 import signal
+import socketserver
 import sys
 import threading
 import time
@@ -40,8 +44,8 @@ if HERE not in sys.path:
     # главнее, подменить json.py файлом из этой папки не выйдет.
     sys.path.append(HERE)
 
-from sources import (EventsSource, KubeSource, LoadSource, QdrantSource, RateLimited,  # noqa: E402
-                     ServiceChecks, build_qdrant)
+from sources import (EventsSource, KubeAPI, KubeSource, LoadSource, QdrantSource,  # noqa: E402
+                     RateLimited, ServiceChecks, build_qdrant)
 
 SCHEMA = "panel/1"
 # Цвета машин: первые слоты категориальной палитры (синий, оранжевый, бирюзовый проверены на
@@ -694,7 +698,20 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
                 ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
                 ".ico": "image/x-icon", ".json": "application/json"}
 _INLINE = re.compile(rb"<(script|style)>(.*?)</\1>", re.S)
+_TOKEN_IN_URL = re.compile(r"(token=)[^&\s\"]+")
 MAX_EVENT_BODY = 64 * 1024
+
+
+class PanelHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer без обратного DNS при запуске: машинам стенда DNS закрыт, и
+    getfqdn(адрес lima0) ждал бы таймаута резолвера."""
+
+    daemon_threads = True
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name, self.server_port = str(host), port
 
 
 def csp_for(html: bytes) -> str:
@@ -708,7 +725,10 @@ def csp_for(html: bytes) -> str:
             "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 
-def make_handler(panel: Panel, static_dir: str, token: str | None = None, verbose: bool = False):
+def make_handler(panel: Panel, static_dir: str, token: str | None = None, verbose: bool = False,
+                 events_only: bool = False):
+    """Обработчик HTTP. events_only — для адреса, открытого машинам кластера (--event-bind):
+    только POST /api/event и только с токеном; страница, /api/state и /healthz там 404."""
     root = os.path.realpath(static_dir)
 
     class Handler(BaseHTTPRequestHandler):
@@ -726,6 +746,8 @@ def make_handler(panel: Panel, static_dir: str, token: str | None = None, verbos
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Frame-Options", "DENY")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -737,7 +759,9 @@ def make_handler(panel: Panel, static_dir: str, token: str | None = None, verbos
 
         def do_GET(self) -> None:  # noqa: N802
             path = urllib.parse.urlsplit(self.path).path
-            if path == "/api/state":
+            if events_only:
+                self._json(404, {"error": "not found"})
+            elif path == "/api/state":
                 self._send(200, panel.state_bytes(), "application/json; charset=utf-8")
             elif path == "/healthz":
                 self._json(200, {"ok": True})
@@ -767,16 +791,33 @@ def make_handler(panel: Panel, static_dir: str, token: str | None = None, verbos
                 if not got:
                     got = (urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("token") or [""])[0]
                 return hmac.compare_digest(got.encode(), token.encode())
+            if events_only:
+                return False  # без токена с внешнего адреса не принимаем ничего
             try:
                 return ipaddress.ip_address(self.client_address[0]).is_loopback
             except ValueError:
                 return False
 
+        def _drain(self) -> None:
+            """Перед отказом дочитать небольшое тело. Иначе закрытие с непрочитанными данными даёт
+            клиенту сброс соединения вместо ответа, а при keep-alive остаток тела читается как
+            следующий запрос. Большое или непонятное тело не читаем: соединение закрывается."""
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                n = -1
+            if self.headers.get("Transfer-Encoding") or not 0 <= n <= MAX_EVENT_BODY:
+                self.close_connection = True
+            elif n:
+                self.rfile.read(n)
+
         def do_POST(self) -> None:  # noqa: N802
             if urllib.parse.urlsplit(self.path).path != "/api/event":
+                self._drain()
                 self._json(404, {"error": "not found"})
                 return
             if not self._authorized():
+                self._drain()
                 self._json(403, {"error": "forbidden"})
                 return
             try:
@@ -806,8 +847,9 @@ def make_handler(panel: Panel, static_dir: str, token: str | None = None, verbos
             self._json(201, {"ok": True, "ids": ids})
 
         def log_message(self, fmt: str, *args) -> None:
-            if verbose:
-                super().log_message(fmt, *args)
+            if verbose:  # токен из ?token= (Falco) в журнал не пишем
+                msg = _TOKEN_IN_URL.sub(r"\1…", fmt % args)
+                sys.stderr.write(f"{self.address_string()} - - [{self.log_date_time_string()}] {msg}\n")
 
     return Handler
 
@@ -848,7 +890,19 @@ def build(args: argparse.Namespace) -> Panel:
         return panel
     load = LoadSource(path=args.load_stats) if args.load_stats else None
     kube = None
-    if args.kubectl or args.kubeconfig or args.kube_server:
+    kubectl = bool(args.kubectl or args.kubeconfig or args.kube_server)
+    if args.kube_api:
+        if kubectl or args.kube_context:
+            raise ValueError("--kube-api ходит в API без kubectl: --kubectl, --kubeconfig, --kube-server "
+                             "и --kube-context с ним не задаются")
+        if not args.kube_ca or not args.kube_token_file:
+            raise ValueError("для --kube-api нужны --kube-ca (CA кластера) и --kube-token-file")
+        api = KubeAPI(args.kube_api, args.kube_ca, args.kube_token_file, timeout=args.kube_timeout)
+        kube = KubeSource(api=api, timeout=args.kube_timeout, namespaces=namespaces,
+                          leases=not args.no_kube_leases)
+    elif args.kube_ca or args.kube_token_file:
+        raise ValueError("--kube-ca и --kube-token-file нужны только вместе с --kube-api")
+    elif kubectl:
         kube = KubeSource(kubectl=args.kubectl or "kubectl", kubeconfig=args.kubeconfig,
                           servers=args.kube_server, context=args.kube_context, timeout=args.kube_timeout,
                           namespaces=namespaces, leases=not args.no_kube_leases)
@@ -857,7 +911,8 @@ def build(args: argparse.Namespace) -> Panel:
         if not args.qdrant_collection:
             raise ValueError("для --qdrant нужна --qdrant-collection")
         if not args.qdrant_key_file:
-            print("[panel] без --qdrant-key-file запросы к Qdrant пойдут без ключа", file=sys.stderr)
+            print("[panel] Qdrant без ключа: так и задумано для шлюза :30633 (deploy/qdrant/gate.py)",
+                  file=sys.stderr)
         qdrant = QdrantSource([_split_target(t) for t in args.qdrant], args.qdrant_key_file,
                               args.qdrant_collection, timeout=args.qdrant_timeout,
                               cafile=args.qdrant_cafile, insecure=args.qdrant_insecure)
@@ -875,9 +930,32 @@ def build(args: argparse.Namespace) -> Panel:
             checks.append((name.strip(), host, port))
         observer = ServiceChecks(checks)
     if not any((load, kube, qdrant, observer)):
-        print("[panel] ни одного источника: задайте --load-stats, --kubeconfig, --qdrant или --mock",
+        print("[panel] ни одного источника: задайте --load-stats, --kube-api, --kubeconfig, --qdrant или --mock",
               file=sys.stderr)
     return Panel(cfg, events, load=load, kube=kube, qdrant=qdrant, observer=observer)
+
+
+def listeners(args: argparse.Namespace, panel: Panel, token: str | None) -> list[PanelHTTPServer]:
+    """Адреса HTTP: --bind — страница, /api/state и события; --event-bind (если задан) — только
+    POST /api/event с токеном. Так страница остаётся на 127.0.0.1, а события Falco принимает
+    адрес сети машин. Не открылся какой-то адрес — OSError, открытые закрываются."""
+    if args.event_bind and not token:
+        raise ValueError("для --event-bind нужен --event-token-file: без токена события с чужого адреса "
+                         "не принимаются")
+    static = os.path.join(HERE, "static")
+    plan = [((args.bind, args.port), make_handler(panel, static, token, args.verbose))]
+    if args.event_bind:
+        port = args.port if args.event_port is None else args.event_port
+        plan.append(((args.event_bind, port), make_handler(panel, static, token, args.verbose, events_only=True)))
+    out: list[PanelHTTPServer] = []
+    try:
+        for addr, handler in plan:
+            out.append(PanelHTTPServer(addr, handler))
+    except OSError as e:
+        for s in out:
+            s.server_close()
+        raise OSError(f"не открыть {addr[0]}:{addr[1]}: {e.strerror or e}") from None
+    return out
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -891,12 +969,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g = ap.add_argument_group("нагрузка")
     g.add_argument("--load-stats", help="JSON генератора нагрузки (loadgen.py --stats-file)")
     g = ap.add_argument_group("Kubernetes")
+    g.add_argument("--kube-api", action="append", default=[],
+                   help="https://адрес API без kubectl (на стенде https://127.0.0.1:6443, вход HAProxy); "
+                        "можно несколько раз — запасные")
+    g.add_argument("--kube-ca", help="CA кластера для проверки сертификата API (с --kube-api)")
+    g.add_argument("--kube-token-file", help="токен учётной записи только на чтение (с --kube-api)")
     g.add_argument("--kubectl", help="путь к kubectl (по умолчанию ищется в PATH)")
     g.add_argument("--kubeconfig", help="kubeconfig с правами на чтение узлов, подов и leases")
     g.add_argument("--kube-server", action="append", default=[],
                    help="адрес API-сервера; можно несколько раз — запасные на случай отказа")
     g.add_argument("--kube-context")
-    g.add_argument("--kube-timeout", type=float, default=4.0, help="жёсткий таймаут kubectl, с (4)")
+    g.add_argument("--kube-timeout", type=float, default=4.0, help="жёсткий таймаут kubectl или запроса к API, с (4)")
     g.add_argument("--kube-namespaces", default="search,qdrant",
                    help="пространства имён с подами приложения; остальные — «системные»")
     g.add_argument("--no-kube-leases", action="store_true", help="не читать аренды kubelet (пульс узлов)")
@@ -919,6 +1002,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--spike-ms", type=float, default=250.0, help="порог события «всплеск p99», мс (250)")
     g = ap.add_argument_group("события и оформление")
     g.add_argument("--event-token-file", help="токен для POST /api/event; без него — только с localhost")
+    g.add_argument("--event-bind", help="второй адрес только для POST /api/event с токеном (например, lima0 "
+                                        "machine-4 для Falco); страница там не отдаётся")
+    g.add_argument("--event-port", type=int, help="порт для --event-bind (по умолчанию как --port)")
     g.add_argument("--title", default="Kubernetes + Qdrant")
     g.add_argument("--subtitle", default="Search service on a 3-node k3s HA cluster")
     g.add_argument("--caption", default="3 VMs + observer on one laptop · numbers for this hardware")
@@ -934,27 +1020,37 @@ def main(argv: list[str] | None = None) -> int:
             with open(args.event_token_file, encoding="utf-8") as f:
                 token = f.read().strip() or None
         panel = build(args)
+        servers = listeners(args, panel, token)
     except (ValueError, OSError) as e:
         print(f"[panel] {e}", file=sys.stderr)
         return 2
+    server, extra = servers[0], servers[1:]
     panel.tick()
     panel.start()
-    server = ThreadingHTTPServer((args.bind, args.port), make_handler(panel, os.path.join(HERE, "static"),
-                                                                      token, args.verbose))
-    server.daemon_threads = True
+    for s in extra:
+        threading.Thread(target=s.serve_forever, kwargs={"poll_interval": 0.5}, name="panel-events",
+                         daemon=True).start()
+
     def on_term(signum, frame) -> None:  # SIGTERM — так же, как Ctrl+C: закрыть сокет и потоки
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, on_term)
-    host = f"[{args.bind}]" if ":" in args.bind else args.bind
-    print(f"[panel] http://{host}:{server.server_address[1]}/ · режим {panel.cfg.mode} · "
-          f"источники: {', '.join(s.name for s in panel.sources()) or 'нет'}", file=sys.stderr, flush=True)
+
+    def url(s: PanelHTTPServer) -> str:
+        host = str(s.server_address[0])
+        return f"http://{f'[{host}]' if ':' in host else host}:{s.server_address[1]}"
+    events = f" · события: {url(extra[0])}/api/event (только с токеном)" if extra else ""
+    print(f"[panel] {url(server)}/ · режим {panel.cfg.mode} · "
+          f"источники: {', '.join(s.name for s in panel.sources()) or 'нет'}{events}", file=sys.stderr, flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
     finally:
         panel.stop()
-        server.server_close()
+        for s in extra:
+            s.shutdown()
+        for s in servers:
+            s.server_close()
     return 0
 
 

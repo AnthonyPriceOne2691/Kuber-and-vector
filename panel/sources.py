@@ -304,17 +304,103 @@ def parse_leases(doc: dict) -> dict:
     return out
 
 
+# Что панель читает из API Kubernetes, и только это (те же права в deploy/panel/rbac.yaml)
+KUBE_LISTS = {
+    "nodes": ("Node", "/api/v1/nodes"),
+    "pods": ("Pod", "/api/v1/pods"),
+    "leases": ("Lease", "/apis/coordination.k8s.io/v1/namespaces/kube-node-lease/leases"),
+}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Переадресацию не выполняем: заголовок с токеном не должен уйти на другой адрес."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class KubeAPI:
+    """API Kubernetes без kubectl: только GET трёх списков (узлы, поды, аренды kubelet).
+
+    HTTPS с проверкой сертификата сервера по CA кластера (и только по нему: системные УЦ не
+    в счёт), имя или адрес из URL сверяются с сертификатом, отключить проверку нельзя. Токен
+    учётной записи только на чтение — из файла, перечитывается, когда файл заменили (установка
+    выпускает новый); уходит только в заголовке Authorization, в журналы и состояние панели
+    не попадает. Переадресации не выполняются."""
+
+    MAX_BYTES = 16 * 1024 * 1024
+
+    def __init__(self, servers, ca_file: str, token_file: str, timeout: float = 4.0) -> None:
+        self.servers = [s.rstrip("/") for s in ([servers] if isinstance(servers, str) else servers)]
+        if not self.servers:
+            raise ValueError("нужен адрес API Kubernetes")
+        for s in self.servers:
+            if urllib.parse.urlsplit(s).scheme != "https":
+                raise ValueError(f"API Kubernetes только по https, получено {s!r}")
+        if not ca_file or not token_file:
+            raise ValueError("для API Kubernetes нужны CA кластера и файл токена")
+        self.token_file = token_file
+        self.timeout = timeout
+        ctx = ssl.create_default_context(cafile=ca_file)  # нет файла CA — ошибка сразу, при запуске
+        # прокси из окружения не нужны: API в сети стенда
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect(),
+                                                   urllib.request.HTTPSHandler(context=ctx))
+        self._token_cache: tuple[tuple | None, str | None] = (None, None)
+
+    def _token(self) -> str:
+        try:
+            st = os.stat(self.token_file)
+            stamp = (st.st_ino, st.st_mtime_ns, st.st_size)
+            if self._token_cache[0] != stamp:
+                with open(self.token_file, encoding="utf-8") as f:
+                    self._token_cache = (stamp, f.read().strip())
+        except OSError:
+            raise RuntimeError("cannot read token file") from None
+        if not self._token_cache[1]:
+            raise RuntimeError("token file is empty")
+        return self._token_cache[1]
+
+    def get(self, server: str, path: str) -> dict:
+        req = urllib.request.Request(server + path, headers={
+            "Accept": "application/json", "User-Agent": "stand-panel/1",
+            "Authorization": "Bearer " + self._token()})
+        try:
+            with self._opener.open(req, timeout=self.timeout) as r:
+                body = r.read(self.MAX_BYTES + 1)
+        except urllib.error.HTTPError as e:
+            e.close()  # у ошибки HTTP тоже открытый ответ
+            if e.code == 401:
+                raise PermissionError("HTTP 401: token rejected (expired? rerun deploy/panel/install.sh)") from None
+            if e.code == 403:
+                raise PermissionError("HTTP 403: no read access") from None
+            raise RuntimeError(f"HTTP {e.code}") from None
+        if len(body) > self.MAX_BYTES:
+            raise RuntimeError("answer too large")
+        return json.loads(body)
+
+    def list_items(self, server: str, what: str) -> list[dict]:
+        """Элементы списка с полем kind, как у `kubectl get … -o json` (в ответе API его нет)."""
+        kind, path = KUBE_LISTS[what]
+        doc = self.get(server, path)
+        items = doc.get("items") if isinstance(doc, dict) else None
+        if not isinstance(items, list):
+            raise ValueError("unexpected API answer")
+        return [dict(it, kind=kind) for it in items if isinstance(it, dict)]
+
+
 class KubeSource(Source):
-    """Узлы и поды через kubectl. Вызов может висеть, когда API недоступен: у kubectl свой
-    --request-timeout, у процесса — жёсткий таймаут, данные — последние удачные. Если задано
-    несколько --server, при отказе текущего пробуем следующий (у k3s HA их три)."""
+    """Узлы и поды: через kubectl или напрямую через API (KubeAPI). Вызов может висеть, когда
+    API недоступен: у kubectl свой --request-timeout, у процесса — жёсткий таймаут, у API —
+    таймаут сокета; данные — последние удачные. Если задано несколько серверов, при отказе
+    текущего пробуем следующий (у k3s HA их три)."""
 
     name = "kube"
     interval = 2.0
 
     def __init__(self, kubectl: str = "kubectl", kubeconfig: str | None = None, servers=(),
                  context: str | None = None, timeout: float = 4.0, namespaces=("search", "qdrant"),
-                 leases: bool = True, runner=None, interval: float | None = None) -> None:
+                 leases: bool = True, runner=None, api: KubeAPI | None = None,
+                 interval: float | None = None) -> None:
         super().__init__(interval)
         self.kubectl = kubectl
         self.kubeconfig = kubeconfig
@@ -323,7 +409,9 @@ class KubeSource(Source):
         self.namespaces = tuple(namespaces)
         self.leases = leases
         self.runner = runner or self._subprocess
-        self._servers = list(servers) or [None]
+        self.api = api
+        self._label = "kubectl" if api is None else "Kubernetes API"
+        self._servers = list(api.servers) if api is not None else (list(servers) or [None])
         self._cur = 0
 
     def command(self, server: str | None, args: list[str]) -> list[str]:
@@ -344,12 +432,13 @@ class KubeSource(Source):
             raise RuntimeError(lines[-1] if lines else f"kubectl exited with {p.returncode}")
         return p.stdout
 
-    def _run(self, args: list[str]) -> tuple[str, str | None]:
+    def _on_servers(self, fn):
+        """fn(сервер) по очереди, начиная с того, что ответил в прошлый раз; он и остаётся текущим."""
         last: BaseException | None = None
         for k in range(len(self._servers)):
             idx = (self._cur + k) % len(self._servers)
             try:
-                out = self.runner(self.command(self._servers[idx], args), self.timeout)
+                out = fn(self._servers[idx])
                 self._cur = idx
                 return out, self._servers[idx]
             except FileNotFoundError:
@@ -358,11 +447,28 @@ class KubeSource(Source):
                 last = e
         raise last if last else RuntimeError("no API server")
 
+    def _run(self, args: list[str]) -> tuple[str, str | None]:
+        return self._on_servers(lambda server: self.runner(self.command(server, args), self.timeout))
+
+    def _fetch(self, what: str) -> tuple[dict, str | None]:
+        """«nodes,pods» или «leases» -> (документ как у `kubectl get … -o json`, какой сервер ответил)."""
+        if self.api is not None:
+            def lists(server: str) -> dict:
+                items: list[dict] = []
+                for part in what.split(","):
+                    items += self.api.list_items(server, part)
+                return {"kind": "List", "items": items}
+            return self._on_servers(lists)
+        args = (["get", "nodes,pods", "-A", "-o", "json"] if what == "nodes,pods"
+                else ["get", "leases", "-n", "kube-node-lease", "-o", "json"])
+        raw, server = self._run(args)
+        return json.loads(raw), server
+
     def poll(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
         try:
-            raw, server = self._run(["get", "nodes,pods", "-A", "-o", "json"])
-            parsed = parse_kube(json.loads(raw), self.namespaces)
+            doc, server = self._fetch("nodes,pods")
+            parsed = parse_kube(doc, self.namespaces)
         except FileNotFoundError:
             self._fail("kubectl not found", now)
             return
@@ -370,13 +476,12 @@ class KubeSource(Source):
             self._fail("Kubernetes API not responding (kubectl timed out)", now)
             return
         except Exception as e:
-            self._fail(f"kubectl: {short_error(e)}", now)
+            self._fail(f"{self._label}: {short_error(e)}", now)
             return
         leases = None
         if self.leases:
             try:
-                raw_l, _ = self._run(["get", "leases", "-n", "kube-node-lease", "-o", "json"])
-                leases = parse_leases(json.loads(raw_l))
+                leases = parse_leases(self._fetch("leases")[0])
             except Exception:
                 leases = None  # нет прав на leases — без пульса, по одному Ready
         parsed.update(leases=leases, server=server, fetched_at=now)

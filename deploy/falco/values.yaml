@@ -42,6 +42,25 @@ falco:
   rules_files:
     - /etc/falco/falco_rules.yaml
     - /etc/falco/rules.d
+  # Тревоги в панель (http_output на machine-4:8090 с токеном). Адрес с токеном лежит не здесь и не
+  # в ConfigMap чарта, а в Secret falco-panel-output: его создаёт deploy/panel/install.sh, токен в git
+  # не попадает. Secret монтируется папкой /etc/falco/panel (mounts ниже), Falco дочитывает её после
+  # falco.yaml; config.d остаётся первым, как в чарте. Пока панели нет, папка пустая (optional).
+  config_files:
+    - /etc/falco/config.d
+    - /etc/falco/panel
+
+mounts:
+  volumes:
+    - name: panel-output
+      secret:
+        secretName: falco-panel-output
+        optional: true
+        defaultMode: 0400
+  volumeMounts:
+    - name: panel-output
+      mountPath: /etc/falco/panel
+      readOnly: true
 
 resources:
   requests: {cpu: 50m, memory: 128Mi}

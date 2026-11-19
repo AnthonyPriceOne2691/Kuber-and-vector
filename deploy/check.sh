@@ -1,7 +1,8 @@
 #!/bin/bash
-# Проверка стенда после подъёма: кластер, база, поиск через вход, песочница машин.
+# Проверка стенда после подъёма: кластер, база, поиск через вход, мониторинг, песочница машин, панель.
 # Каждая проверка печатает ✓ или ✗; код выхода 1, если провалилась хоть одна.
 #   deploy/check.sh
+#   CHECK_ANSWER=1  ещё ответ модели через вход; CHECK_FALCO=1  ещё тревога Falco в ленте панели
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -97,6 +98,86 @@ check "фильтр не даёт чат с чужой моделью (403)" bas
 check "фильтр не даёт держать модель в памяти (keep_alive → 400)" bash -c "[ \$(limactl shell machine-1 curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.105.1:11434/api/chat -d '{\"model\":\"qwen3:8b\",\"keep_alive\":-1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}') = 400 ]"
 check "IPv6 выключен" bash -c "[ \$(limactl shell machine-1 cat /proc/sys/net/ipv6/conf/all/disable_ipv6) = 1 ]"
 check "папок Мака в машине нет" not limactl shell machine-1 test -d /Users
+
+echo "панель (machine-4, deploy/panel)"
+panel_state() { limactl shell machine-4 curl -sf -m 5 http://127.0.0.1:8090/api/state; }
+panel_sees_stand() {  # три узла с пульсом kubelet, три пира Qdrant по машинам, вход HAProxy; источник нагрузки подключён
+  panel_state | "$PY" -I -c '
+import json, sys
+s = json.load(sys.stdin)
+src, k, q = s["sources"], s["kube"], s["qdrant"]
+assert s["mode"] == "live" and "load" in src
+assert src["kube"]["ok"] and k["heartbeats"] and sum(n["ready"] == "True" for n in k["nodes"]) == 3
+assert src["qdrant"]["ok"] and len(q["peers"]) == 3 and all(p["reachable"] and p["machine"] for p in q["peers"])
+obs = next(m for m in s["machines"] if m["role"] == "observer")
+assert any(x["name"].startswith("HAProxy") and x["ok"] for x in obs["services"])'
+}
+api_cert_for_localhost() {  # каждый сервер API: сертификат с 127.0.0.1 в SAN, подписан CA кластера
+  local ip
+  for ip in "$@"; do
+    limactl shell machine-4 sudo openssl s_client -connect "$ip:6443" -verify_ip 127.0.0.1 \
+      -CAfile /etc/stand-panel/kube-ca.crt -verify_return_error </dev/null >/dev/null 2>&1 || return 1
+  done
+}
+panel_token_hours() {  # сколько часов ещё действует токен панели: поле exp, сам токен не печатается
+  limactl shell machine-4 sudo python3 -I -c 'import base64, json, time; p = open("/etc/stand-panel/kube-token").read().split(".")[1]; print(int((json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))["exp"] - time.time()) // 3600))'
+}
+panel_token_ok() {
+  local h
+  [ "$(limactl shell machine-4 sudo stat -c '%a %U' /etc/stand-panel/kube-token)" = "600 stand-panel" ] || return 1
+  h="$(panel_token_hours)" && [ "$h" -ge 1 ]
+}
+panel_rbac() {  # учётная запись панели читает узлы, поды и аренды kubelet, и больше ничего
+  limactl shell machine-1 sudo bash -s <<'EOS'
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+as=system:serviceaccount:stand-panel:panel-reader; bad=0
+for a in "list nodes" "list pods -A" "list leases.coordination.k8s.io -n kube-node-lease"; do
+  k3s kubectl auth can-i $a --as=$as >/dev/null 2>&1 || { echo "нет права: $a"; bad=1; }
+done
+for a in "list secrets -A" "get secrets -n qdrant" "list configmaps -A" "create pods/exec -n search" \
+    "get pods/exec -n search" "get pods/log -n search" "create pods/portforward -n search" "get nodes/proxy" \
+    "create pods -n search" "delete pods -n search" "patch nodes" "list leases.coordination.k8s.io -n kube-system" \
+    "create serviceaccounts/token -n stand-panel"; do
+  if k3s kubectl auth can-i $a --as=$as >/dev/null 2>&1; then echo "лишнее право: $a"; bad=1; fi
+done
+exit $bad
+EOS
+}
+panel_hidden_on_lima0() {  # с машины кластера на lima0:8090 страница и /api/state не отдаются (404)
+  local p code
+  for p in / /api/state; do
+    code="$(limactl shell machine-1 curl -s -m 3 -o /dev/null -w '%{http_code}' "http://$ENTRY:8090$p")" || return 1
+    [ "$code" = 404 ] || return 1
+  done
+}
+panel_falco_wired() {  # адрес панели с токеном лежит в Secret, и DaemonSet Falco его монтирует
+  kc -n falco get secret falco-panel-output >/dev/null 2>&1 \
+    && kc -n falco get ds falco -o jsonpath='{.spec.template.spec.volumes[*].name}' | grep -qw panel-output
+}
+panel_falco_event() {  # оболочка в поде поиска: тревога Falco должна дойти до ленты панели
+  local t0 _
+  t0=$(date +%s)
+  kc -n search exec deploy/search -- sh -c 'exit 0' || return 1
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    panel_state | "$PY" -I -c 'import json, sys; t = float(sys.argv[1]) - 10; s = json.load(sys.stdin); sys.exit(0 if any(e["source"] == "falco" and e["title"] == "Stand shell in search pod" and e.get("last_ts", e["ts"]) >= t for e in s["events"]) else 1)' "$t0" && return 0
+    sleep 1
+  done
+  return 1
+}
+check "служба stand-panel работает" limactl shell machine-4 systemctl is-active -q stand-panel
+check "панель видит три узла, три пира Qdrant и вход" panel_sees_stand
+check "API через 127.0.0.1:6443: в сертификате каждого сервера 127.0.0.1, проверка по CA кластера" api_cert_for_localhost "$M1" "$(ip_of machine-2)" "$(ip_of machine-3)"
+check "токен панели: файл 600 у stand-panel, действует ещё час и больше" panel_token_ok
+echo "    токен панели действует ещё $(panel_token_hours 2>/dev/null || echo '?') ч (новый: deploy/panel/install.sh)"
+check "у панели в Kubernetes только чтение узлов, подов и аренд" panel_rbac
+check "с lima0:8090 только события: страница и /api/state 404" panel_hidden_on_lima0
+check "событие без токена отклоняется (403)" bash -c "[ \$(limactl shell machine-1 curl -s -m 3 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{\"title\":\"check\"}' http://$ENTRY:8090/api/event) = 403 ]"
+check "порт событий 8090 закрыт для Мака" not curl -s -m 3 -o /dev/null "http://$ENTRY:8090/"
+check "страница на Маке: http://127.0.0.1:18090 (проброс Lima при создании machine-4)" curl -sf -m 3 -o /dev/null http://127.0.0.1:18090/healthz
+check "Falco знает адрес панели (Secret falco-panel-output и том в DaemonSet)" panel_falco_wired
+if [ "${CHECK_FALCO:-0}" = 1 ]; then  # запускает оболочку в поде поиска, в ленте панели появится тревога
+  check "тревога Falco доходит до ленты панели" panel_falco_event
+fi
 
 echo; echo "итого: $pass ✓, $fail ✗"
 [ "$fail" -eq 0 ]
