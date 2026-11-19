@@ -63,6 +63,7 @@ main { display: grid; grid-template-columns: 1fr 560px; column-gap: 20px; min-he
   min-width: 0; position: relative; overflow: hidden; }
 .label { font-size: 13px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .note { font-size: 14px; color: var(--muted); white-space: nowrap; }
+.row .note { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
 
 /* --- плитки с числами --- */
@@ -151,7 +152,10 @@ canvas.plot { position: absolute; inset: 0; width: 100%; height: 100%; display: 
 .m-foot .q.warn::before { content: "▲ "; color: var(--warning); }
 .machine.observer .m-name { color: var(--ink-2); }
 .machine.observer .m-hb, .machine.observer .m-foot { display: none; }
-.pods.dense .chip-in { height: 27px; margin-bottom: 4px; font-size: 14px; }
+.pods.dense { margin-top: 6px; }
+/* три строки (Qdrant и два пода поиска во время отказа) должны влезать целиком: по снимку 19.11 на 27 + 4 px
+   третья строка обрезалась на ~13 px */
+.pods.dense .chip-in { height: 24px; margin-bottom: 3px; font-size: 13.5px; }
 .legend b { font-weight: 400; }
 
 /* --- карта Qdrant --- */
@@ -509,7 +513,7 @@ footer { display: flex; justify-content: space-between; align-items: center; fon
     const L = S.load;
     if (!L) {
       for (const k of Object.keys(num)) num[k].set(null);
-      setText($("#qps-note"), "load generator not connected");
+      setText($("#qps-note"), "not connected");
       chip($("#err-wr-chip"), "", "●", "no data"); chip($("#err-wo-chip"), "", "●", "no data");
       return;
     }
@@ -518,7 +522,7 @@ footer { display: flex; justify-content: space-between; align-items: center; fon
     num.qps.set(stale ? null : w10.qps);
     num.p95.set(w10.p95_ms);
     num.p99.set(w10.p99_ms);
-    setText($("#qps-note"), stale ? "generator stopped" : cfg.rate ? `target ${cfg.rate}/s` : "");
+    setText($("#qps-note"), stale ? "stopped" : cfg.rate ? `target ${cfg.rate}/s` : "");
     setText($("#p95-note"), `p50 ${fmtMs(w10.p50_ms)} · 10 s window`);
     const usual = usualP99(L.series || []);
     const foot = $("#p99-foot");

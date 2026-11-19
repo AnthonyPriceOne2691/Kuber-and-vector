@@ -81,6 +81,15 @@ class ParseKubeTest(unittest.TestCase):
         only_search = {p["name"]: p for p in parse_kube(fixture("kubectl_nodes_pods.json"), ("search",))["pods"]}
         self.assertTrue(only_search["qdrant-0"]["system"])
 
+    def test_qdrant_gate_counts_as_system(self):
+        # шлюз Qdrant в пространстве qdrant: в карточке машины он «+N system», а не строка рядом с Qdrant и поиском
+        gate = {"kind": "Pod", "metadata": {"name": "qdrant-gate-bdncf", "namespace": "qdrant", "labels": {"app": "qdrant-gate"},
+                                            "ownerReferences": [{"kind": "DaemonSet", "name": "qdrant-gate"}]},
+                "spec": {"nodeName": "machine-1"}, "status": {"phase": "Running"}}
+        pods = {p["name"]: p for p in parse_kube({"items": [gate]})["pods"]}
+        self.assertEqual(pods["qdrant-gate-bdncf"]["app"], "qdrant-gate")
+        self.assertTrue(pods["qdrant-gate-bdncf"]["system"])
+
     def test_garbage_is_rejected(self):
         with self.assertRaises(ValueError):
             parse_kube({"kind": "Status", "message": "Unauthorized"})
