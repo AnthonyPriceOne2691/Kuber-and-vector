@@ -58,6 +58,9 @@ affinity:
 podDisruptionBudget:
   enabled: true
   maxUnavailable: 1
+  # явно то же, что по умолчанию: не готовый пир (например, ещё догоняет копии шардов) выселяется,
+  # только если бюджет не нарушен; для базы это осторожнее, чем AlwaysAllow
+  unhealthyPodEvictionPolicy: IfHealthyBudget
 
 persistence:
   size: 4Gi

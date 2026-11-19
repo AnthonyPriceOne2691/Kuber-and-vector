@@ -119,3 +119,11 @@ metrics:
   kernelIterEventCountersEnabled: false
   service:
     create: false
+
+# Исключения kube-linter (CI, job manifests). У сторожа они по устройству: он смотрит на всю машину.
+controller:
+  annotations:
+    ignore-check.kube-linter.io/run-as-non-root: "Falco читает события ядра и /proc хоста; root, но с узким набором прав (leastPrivileged, без privileged)"
+    ignore-check.kube-linter.io/sensitive-host-mounts: "/proc и /etc хоста нужны Falco для сведений о процессах и пользователях машины"
+    ignore-check.kube-linter.io/no-read-only-root-fs: "корень только на чтение для Falco на стенде ещё не проверен"
+    ignore-check.kube-linter.io/drop-net-raw-capability: "сырые сокеты Falco не нужны, но drop ALL вместе с leastPrivileged на стенде ещё не проверен"

@@ -81,16 +81,17 @@ jobs:
       - name: Манифесты стенда и чарты с нашими values
         run: |
           set -euo pipefail
-          M="$RUNNER_TEMP/manifests"; C="$RUNNER_TEMP/charts"; mkdir -p "$M/charts" "$C"
+          M="$RUNNER_TEMP/manifests"; C="$RUNNER_TEMP/charts"; mkdir -p "$M" "$C"
           python3 -I -B deploy/ci/render.py "$M"
           curl -fsSL --retry 3 -o "$C/qdrant.tgz" https://github.com/qdrant/qdrant-helm/releases/download/qdrant-1.20.2/qdrant-1.20.2.tgz
           curl -fsSL --retry 3 -o "$C/falco.tgz" https://github.com/falcosecurity/charts/releases/download/falco-9.2.2/falco-9.2.2.tgz
           printf '%s  %s\n' "$QDRANT_CHART_SHA256" "$C/qdrant.tgz" "$FALCO_CHART_SHA256" "$C/falco.tgz" | sha256sum -c -
           helm lint "$C/qdrant.tgz" -f deploy/qdrant/values.yaml
           helm lint "$C/falco.tgz" -f deploy/falco/values.yaml
-          helm template qdrant "$C/qdrant.tgz" -n qdrant -f deploy/qdrant/values.yaml --kube-version "$K8S" > "$M/charts/qdrant.yaml"
-          helm template falco "$C/falco.tgz" -n falco -f deploy/falco/values.yaml --kube-version "$K8S" > "$M/charts/falco.yaml"
-          grep -c '^kind:' "$M/charts/qdrant.yaml" "$M/charts/falco.yaml"
+          # --skip-tests: под проверки чарта (helm test) в кластер не ставится, а политика образов его и не пустила бы
+          helm template qdrant "$C/qdrant.tgz" -n qdrant -f deploy/qdrant/values.yaml --kube-version "$K8S" --skip-tests > "$M/chart-qdrant.yaml"
+          helm template falco "$C/falco.tgz" -n falco -f deploy/falco/values.yaml --kube-version "$K8S" --skip-tests > "$M/chart-falco.yaml"
+          grep -c '^kind:' "$M/chart-qdrant.yaml" "$M/chart-falco.yaml"
 
       - name: kubeconform против схем Kubernetes 1.37.2
         run: |
@@ -99,6 +100,5 @@ jobs:
             "$RUNNER_TEMP/manifests"
 
       - name: kube-linter
-        # первый прогон собирает замечания; после разбора исключений в .kube-linter.yaml шаг станет гейтом
-        continue-on-error: true
+        # исключения стоят аннотациями на самих объектах, у каждого причина (.kube-linter.yaml)
         run: kube-linter lint --config .kube-linter.yaml "$RUNNER_TEMP/manifests"

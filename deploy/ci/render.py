@@ -57,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             print(f"{rel}: {e}", file=sys.stderr)
             return 1
-        dest = out / rel
+        # одна плоская папка: kube-linter сопоставляет сервисы и поды только внутри одной папки
+        dest = out / "-".join(rel.parts)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(text, encoding="utf-8")
         print(rel)

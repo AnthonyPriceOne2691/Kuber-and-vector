@@ -41,7 +41,7 @@ class RenderTest(unittest.TestCase):
     def test_main_writes_tree(self):
         with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(render.main([d]), 0)
-            self.assertTrue((pathlib.Path(d) / "search" / "k8s.yaml").is_file())
+            self.assertTrue((pathlib.Path(d) / "search-k8s.yaml").is_file())
         self.assertIn("манифестов:", out.getvalue())
 
 

@@ -20,6 +20,8 @@ metadata:
   name: search
   namespace: search
   labels: {app: search}
+  annotations:
+    ignore-check.kube-linter.io/no-anti-affinity: "по машинам раскладывает topologySpreadConstraints с DoNotSchedule, это строже anti-affinity"
 spec:
   replicas: 3
   selector:
@@ -105,6 +107,8 @@ metadata:
   namespace: search
 spec:
   minAvailable: 2
+  # сервис без состояния: зависший под не должен держать вывод машины из работы
+  unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels: {app: search}
 ---

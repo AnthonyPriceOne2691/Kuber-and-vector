@@ -10,6 +10,8 @@ kind: Service
 metadata:
   name: qdrant-local
   namespace: qdrant
+  annotations:
+    ignore-check.kube-linter.io/dangling-service: "выбирает поды Qdrant из чарта; в выводе helm template у объектов чарта нет namespace, поэтому kube-linter их не сопоставляет"
 spec:
   type: ClusterIP
   internalTrafficPolicy: Local

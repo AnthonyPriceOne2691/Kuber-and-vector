@@ -1,4 +1,9 @@
 # kube-linter для манифестов стенда и чартов с нашими values (job manifests в .github/workflows/ci.yml).
-# Пока встроенные проверки по умолчанию. Исключения будут добавляться сюда по одному, каждое с причиной.
+# Встроенные проверки по умолчанию. Исключений здесь нет: они стоят аннотациями
+# ignore-check.kube-linter.io/<проверка> на самих объектах, у каждой причина. Сейчас это:
+#   search (Deployment)       no-anti-affinity          раскладку держит topologySpreadConstraints
+#   qdrant-local (Service)    dangling-service          поды из чарта без namespace в helm template
+#   falco (DaemonSet)         run-as-non-root, sensitive-host-mounts, no-read-only-root-fs,
+#                             drop-net-raw-capability   сторож смотрит на всю машину (deploy/falco/values.yaml)
 checks:
   doNotAutoAddDefaults: false
