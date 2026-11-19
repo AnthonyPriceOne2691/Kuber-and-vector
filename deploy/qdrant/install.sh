@@ -34,6 +34,15 @@ if ! command -v helm >/dev/null; then
   install -m 0755 /tmp/linux-arm64/helm /usr/local/bin/helm
 fi
 kubectl create namespace qdrant --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+# Поды Qdrant ходят под учёткой default (values.yaml), API Kubernetes им не нужен. Токен монтируется
+# при создании пода, поэтому у default он выключается до установки чарта (CIS 5.1.5 и 5.1.6);
+# остальные пространства догоняет deploy/k3s/default-sa.sh.
+kubectl -n qdrant apply --server-side --field-manager=stand-default-sa -f - >/dev/null <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: default}
+automountServiceAccountToken: false
+EOF
 if ! kubectl -n qdrant get secret qdrant-keys >/dev/null 2>&1; then
   d=$(mktemp -d); chmod 700 "$d"
   openssl rand -hex 24 > "$d/api-key"

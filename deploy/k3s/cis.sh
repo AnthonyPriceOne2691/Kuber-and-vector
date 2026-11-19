@@ -6,9 +6,14 @@
 #   - Pod Security по умолчанию baseline, отчёт и предупреждения по restricted; пространства
 #     search и qdrant сами поднимают себе restricted, falco помечен privileged (ему нужен eBPF);
 #   - kubelet проверяет параметры ядра (protect-kernel-defaults), их ставим здесь же;
-#   - потоковые соединения kubelet (exec, logs) закрываются через 5 минут простоя.
+#   - потоковые соединения kubelet (exec, logs) закрываются через 5 минут простоя;
+#   - публичные сертификаты k3s только для root, 600 (CIS 1.1.20): правило systemd после
+#     каждого старта k3s, потому что k3s пишет их заново с 644.
 # На уже работающем кластере шифрование секретов так не включается (нужен k3s secrets-encrypt),
 # поэтому стенд с этими настройками собирается заново: deploy/stand-up.sh на новых машинах.
+# Повторный запуск на работающем сервере безопасен: файлы те же, k3s не перезапускается, а права
+# сертификатов ставятся сразу. Так права 600 доходят до уже поднятого стенда (по одному разу на
+# machine-1…3); остальное из этого файла k3s читает только при старте.
 #   deploy/k3s/cis.sh machine-1
 set -euo pipefail
 VM="${1:?машина}"
@@ -96,5 +101,21 @@ kube-controller-manager-arg:
 kubelet-arg:
   - "streaming-connection-idle-timeout=5m"
 EOF
+
+# CIS 1.1.20: публичные сертификаты k3s (server/tls и вложенные папки) только для root. k3s пишет
+# их с 644 (прогон kube-bench 19.11): при установке, при перевыпуске на старте, когда срок подходит
+# к концу, и после k3s certificate rotate. Поэтому права ставит правило systemd после каждого старта:
+# у службы k3s Type=notify, и ExecStartPost идёт, когда k3s сообщил о готовности, то есть файлы уже
+# на месте. «-» впереди: если find не сработает, k3s из-за этого не остановится. Читает эти файлы
+# только root: сам k3s, папка server 0700, а панель берёт CA кластера через sudo (deploy/panel/install.sh).
+install -d -m 0755 /etc/systemd/system/k3s.service.d
+cat > /etc/systemd/system/k3s.service.d/40-cis-tls.conf <<'EOF'
+# deploy/k3s/cis.sh, CIS 1.1.20
+[Service]
+ExecStartPost=-/usr/bin/find /var/lib/rancher/k3s/server/tls -type f -name "*.crt" -exec chmod 0600 {} +
+EOF
+systemctl daemon-reload
+# на работающем сервере сразу, без перезапуска k3s; на новой машине папки ещё нет
+if [ -d "$S/tls" ]; then find "$S/tls" -type f -name '*.crt' -exec chmod 0600 {} +; fi
 echo "CIS: $(hostname)"
 EOS

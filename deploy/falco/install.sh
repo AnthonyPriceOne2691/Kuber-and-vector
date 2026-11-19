@@ -30,6 +30,14 @@ set -euo pipefail
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 kubectl create namespace falco --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl label namespace falco --overwrite pod-security.kubernetes.io/enforce=privileged >/dev/null
+# Поды Falco ходят под учёткой default (values.yaml), API Kubernetes им не нужен. Токен монтируется
+# при создании пода, поэтому у default он выключается до установки чарта (CIS 5.1.5 и 5.1.6).
+kubectl -n falco apply --server-side --field-manager=stand-default-sa -f - >/dev/null <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: default}
+automountServiceAccountToken: false
+EOF
 helm upgrade --install falco /tmp/falco-chart.tgz -n falco -f /tmp/falco-values.yaml --wait --timeout 10m >/dev/null
 rm -f /tmp/falco-chart.tgz /tmp/falco-values.yaml
 kubectl -n falco get pods -o wide

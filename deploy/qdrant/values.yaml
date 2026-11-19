@@ -44,6 +44,13 @@ podSecurityContext:
   fsGroupChangePolicy: OnRootMismatch
   seccompProfile: {type: RuntimeDefault}
 
+# Токен API Kubernetes в поды не монтируется (CIS 5.1.6): Qdrant с API не говорит, пиры находят
+# друг друга по безголовому сервису. Свою учётку чарт не заводит, поды ходят под default, у которой
+# automountServiceAccountToken: false ставит install.sh ещё до установки чарта (CIS 5.1.5).
+# В шаблонах чарта 1.20.2 поля automountServiceAccountToken нет ни у учётки, ни у пода.
+serviceAccount:
+  create: false
+
 # Два пира на одной машине сделали бы её выключение потерей двух реплик сразу
 affinity:
   podAntiAffinity:

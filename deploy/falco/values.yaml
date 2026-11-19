@@ -15,6 +15,16 @@ driver:
     # не privileged, а только нужные права: BPF, PERFMON, SYS_RESOURCE, SYS_PTRACE
     leastPrivileged: true
 
+# Токен API Kubernetes в поды не монтируется (CIS 5.1.6): Falco здесь API не нужен. Сведения о подах
+# даёт плагин container из containerd, k8smeta и k8s-metacollector выключены (collectors.kubernetes),
+# falcoctl выключен, загрузчика драйвера при modern_ebpf нет, а Role чарта (configmaps) ставится
+# только при driver.kind auto. Своя учётка не нужна: поды ходят под default без токена, его
+# выключает install.sh до установки чарта (CIS 5.1.5).
+serviceAccount:
+  create: false
+rbac:
+  create: false
+
 falcoctl:
   artifact:
     install: {enabled: false}

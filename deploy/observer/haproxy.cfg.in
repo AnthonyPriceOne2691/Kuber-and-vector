@@ -4,6 +4,7 @@
 # Поиск и ответ только по ключу API (заголовок X-API-Key, список ключей в /etc/haproxy/api-keys.map,
 # его создаёт install.sh); перебор ключей и слишком частые запросы с одного адреса получают 429.
 # Строки серверов (@SEARCH_SERVERS@, @ANSWER_SERVERS@, @API_SERVERS@) подставляет install.sh по адресам узлов.
+# Тела ответов 401 и 429 по-английски: их видно в кадре, ролик на английском (решение владельца 19.11).
 global
     log /dev/log local0
     log /dev/log local1 notice
@@ -41,13 +42,13 @@ frontend https
     http-request deny deny_status 405 unless METH_GET
     http-request deny deny_status 404 unless { path /search /answer /healthz }
     # перебор ключей: больше 10 отказов за 10 с, и адрес получает 429 на всё, пока счётчик не остынет
-    http-request return status 429 content-type application/json string '{"error":"слишком много отказов по ключу, подождите"}' if { sc_gpc0_rate(0) gt 10 }
+    http-request return status 429 content-type application/json string '{"error":"too many failed API key attempts, please wait"}' if { sc_gpc0_rate(0) gt 10 }
     # потолок темпа с одного адреса: 600 запросов за 10 с
-    http-request return status 429 content-type application/json string '{"error":"слишком много запросов"}' if { sc_http_req_rate(0) gt 600 }
+    http-request return status 429 content-type application/json string '{"error":"too many requests"}' if { sc_http_req_rate(0) gt 600 }
     acl api_path path /search /answer
     acl key_ok req.hdr(x-api-key),map_str(/etc/haproxy/api-keys.map) -m found
     http-request sc-inc-gpc0(0) if api_path !key_ok
-    http-request return status 401 content-type application/json string '{"error":"нужен ключ API"}' if api_path !key_ok
+    http-request return status 401 content-type application/json string '{"error":"API key required"}' if api_path !key_ok
     # ключ дальше входа не идёт: сервису поиска он не нужен
     http-request del-header x-api-key
     http-response set-header Strict-Transport-Security "max-age=31536000"

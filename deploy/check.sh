@@ -49,6 +49,39 @@ check "DNS кластера: в Corefile нет forward наружу" bash -c "!
 check "DNS кластера: имя кластера отвечает" limactl shell machine-1 python3 -I -B /tmp/dns_probe.py kubernetes.default.svc.cluster.local
 check "DNS кластера: чужое имя сразу получает отказ" limactl shell machine-1 python3 -I -B /tmp/dns_probe.py --refused example.com
 check "Falco на трёх машинах" bash -c "[ \$(limactl shell machine-1 sudo k3s kubectl -n falco get pods -o jsonpath='{range .items[?(@.status.phase==\"Running\")]}{.spec.nodeName}{\"\\n\"}{end}' | sort -u | wc -l) -eq 3 ]"
+# Правки по kube-bench k3s-cis-1.9 (прогон 19.11). Ответ kubectl сначала в переменную, его код
+# проверяется отдельно, а решает awk по готовому тексту: под pipefail код kubectl не смешивается
+# с результатом поиска (как в psa_rejects). tests/test_cis.py гоняет эти функции с поддельным kc.
+default_sa_without_token() {  # CIS 5.1.5: у учётки default токен выключен во всех пространствах, кроме kube-system
+  local out
+  out="$(kc get serviceaccounts -A --field-selector metadata.name=default \
+    -o jsonpath='{range .items[*]}{.metadata.namespace} {.automountServiceAccountToken}{"\n"}{end}')" || return 1
+  awk '$1 != "" && $1 != "kube-system" { n++; if ($2 != "false") bad++ } END { exit (n == 0 || bad > 0) }' <<<"$out"
+}
+pods_without_api_token() {  # CIS 5.1.6: ни в одном поде вне kube-system нет тома с токеном API (kube-api-access-*)
+  local out
+  out="$(kc get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{range .spec.volumes[*]} {.name}{end}{"\n"}{end}')" || return 1
+  awk '$1 != "" && $1 != "kube-system" { n++; for (i = 3; i <= NF; i++) if ($i ~ /^kube-api-access-/) bad++ }
+       END { exit (n == 0 || bad > 0) }' <<<"$out"
+}
+k3s_certs_private() {  # CIS 1.1.20: на каждом сервере *.crt в server/tls только для root, права держит правило systemd
+  local m
+  for m in machine-1 machine-2 machine-3; do
+    limactl shell "$m" sudo bash -s <<'EOS' || return 1
+T=/var/lib/rancher/k3s/server/tls
+all=$(find "$T" -type f -name '*.crt' | wc -l)
+open=$(find "$T" -type f -name '*.crt' -perm /077 | wc -l)
+[ "$all" -gt 0 ] && [ "$open" -eq 0 ] || { echo "$(hostname): сертификатов $all, доступны не только root $open"; exit 1; }
+case "$(systemctl show k3s -p DropInPaths --value)" in
+  *k3s.service.d/40-cis-tls.conf*) ;;
+  *) echo "$(hostname): нет правила systemd 40-cis-tls.conf (deploy/k3s/cis.sh)"; exit 1 ;;
+esac
+EOS
+  done
+}
+check "сертификаты k3s 600 на трёх серверах, права держит правило systemd (CIS 1.1.20)" k3s_certs_private
+check "у учёток default токен выключен во всех пространствах, кроме kube-system (CIS 5.1.5)" default_sa_without_token
+check "токена API нет ни в одном поде вне kube-system (CIS 5.1.6)" pods_without_api_token
 
 echo "поиск через вход https://$ENTRY"
 check "TLS проверяется по УЦ стенда, ответ с адресами" bash -c "curl -sf --cacert '$CA' -H @'$KEYH' 'https://$ENTRY/search?q=$Q&k=3' | $PY -I -c 'import json,sys; r=json.load(sys.stdin)[\"results\"]; assert r and all(\"span\" in x for x in r)'"
