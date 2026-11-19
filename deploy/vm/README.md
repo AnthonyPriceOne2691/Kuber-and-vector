@@ -43,7 +43,7 @@ limactl sudoers --check
 
 ## Команды
 
-- `./kit-build.sh` собирает комплект в `kit/vm`, `./kit-build.sh security` в `kit/vm-security`, `./kit-build.sh falco` в `kit/vm-falco`: одноразовая ВМ, суммы и подписи сверяются там и ещё раз на Маке, ВМ удаляется.
+- `./kit-build.sh` собирает комплект в `kit/vm`, `./kit-build.sh security` в `kit/vm-security`, `./kit-build.sh falco` в `kit/vm-falco`, `./kit-build.sh monitoring` в `kit/vm-monitoring` (Prometheus, node_exporter, Grafana; список утверждён владельцем 19.11): одноразовая ВМ, суммы и подписи сверяются там и ещё раз на Маке, ВМ удаляется.
 - `./up.sh` поднимает все четыре машины, `./up.sh machine-1` только указанные. Повторный запуск безопасен.
 - `../stand-up.sh` поднимает весь стенд с нуля одной командой, `../check.sh` проверяет его.
 - `limactl stop --force machine-2` «выдёргивает шнур» у машины.

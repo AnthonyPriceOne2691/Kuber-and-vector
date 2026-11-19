@@ -105,11 +105,10 @@ python3 -I -B panel/aggregator.py --bind 127.0.0.1 --port 8090 \
   --kube-server https://lima-machine-1.internal:6443 \
   --kube-server https://lima-machine-3.internal:6443 \
   --kube-server https://lima-machine-2.internal:6443 \
-  --qdrant http://<адрес пира на machine-1>:6333 \
-  --qdrant http://<адрес пира на machine-2>:6333 \
-  --qdrant http://<адрес пира на machine-3>:6333 \
-  --qdrant-key-file ~/.config/stand/qdrant-read-only-key \
-  --qdrant-collection lbr_mini_naive500_bge_m3 \
+  --qdrant machine-1=http://<адрес machine-1>:30633 \
+  --qdrant machine-2=http://<адрес machine-2>:30633 \
+  --qdrant machine-3=http://<адрес machine-3>:30633 \
+  --qdrant-collection contracts_rf2 \
   --observer-check 'HAProxy · TLS=127.0.0.1:443' \
   --event-token-file ~/.config/stand/panel-event-token
 ```
@@ -120,7 +119,7 @@ python3 -I -B panel/aggregator.py --bind 127.0.0.1 --port 8090 \
 |---|---|---|
 | load | `--load-stats FILE` | путь из `loadgen.py --stats-file` |
 | kube | `--kubectl`, `--kubeconfig`, `--kube-server` (несколько — запасные), `--kube-context`, `--kube-timeout` (4 с), `--kube-namespaces` (`search,qdrant`), `--no-kube-leases` | kubeconfig с правами только на чтение: `get, list` на `nodes`, `pods` (все ns) и `leases` в `kube-node-lease` |
-| qdrant | `--qdrant [машина=]URL` (по одному на пир), `--qdrant-key-file`, `--qdrant-collection` (коллекция или алиас), `--qdrant-peer peer_id=машина`, `--qdrant-timeout` (1,5 с), `--qdrant-cafile`, `--qdrant-insecure` | адрес каждого пира с machine-4 и ключ **только на чтение** в файле |
+| qdrant | `--qdrant [машина=]URL` (по одному на пир), `--qdrant-key-file`, `--qdrant-collection` (коллекция или алиас), `--qdrant-peer peer_id=машина`, `--qdrant-timeout` (1,5 с), `--qdrant-cafile`, `--qdrant-insecure` | на стенде адрес шлюза каждой машины (`:30633`, `deploy/qdrant/gate.py`): ключ Qdrant шлюз добавляет сам, на machine-4 ключа нет, поэтому `--qdrant-key-file` не нужен |
 | observer | `--observer-check ИМЯ=хост:порт` | TCP-проверка служб machine-4 (HAProxy) |
 | events | `--event-token-file FILE` | токен для внешних событий; без него `POST /api/event` — только с localhost |
 

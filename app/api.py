@@ -24,10 +24,11 @@ import urllib.parse
 import urllib.request
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app import answer as answering
 from app import bm25
+from app import metrics
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant.qdrant.svc.cluster.local:6333").rstrip("/")
 QDRANT_LOCAL_URL = os.environ.get("QDRANT_LOCAL_URL", "").rstrip("/")  # свой пир; пусто значит не пробовать
@@ -50,6 +51,8 @@ POD = os.environ.get("POD_NAME", "")
 PAYLOAD = ["title", "section", "file", "start", "end", "text"]
 
 app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+METRICS = metrics.Registry({"pod": POD})
+COUNTED = {"/search": "search", "/answer": "answer"}  # /metrics, /readyz и /healthz не считаем
 
 
 def _key() -> str:
@@ -103,7 +106,12 @@ def _qdrant(path: str, body: dict | None = None) -> tuple[dict, int]:
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    t0 = time.perf_counter()
     response = await call_next(request)
+    endpoint = COUNTED.get(request.url.path)
+    if endpoint:
+        METRICS.observe("search_request_seconds", {"endpoint": endpoint}, time.perf_counter() - t0)
+        METRICS.inc("search_requests_total", {"endpoint": endpoint, "code": str(response.status_code)})
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Cache-Control"] = "no-store"
     return response
@@ -112,6 +120,12 @@ async def security_headers(request: Request, call_next):
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True}
+
+
+@app.get("/metrics")
+def metrics_text() -> Response:
+    """Метрики для Prometheus на machine-4; через вход 443 не видны (HAProxy пускает только API)."""
+    return Response(METRICS.render(), media_type=metrics.CONTENT_TYPE)
 
 
 @app.get("/readyz")
@@ -145,6 +159,7 @@ def _retrieve(q: str, k: int) -> tuple[list[dict], dict, int]:
     except Exception:
         raise Unavailable("векторизатор недоступен")
     t1 = time.perf_counter()
+    METRICS.observe("search_stage_seconds", {"stage": "embed"}, t1 - t0)
     if SEARCH_MODE == "hybrid":
         body = {"prefetch": [{"query": vector, "using": "dense", "limit": PREFETCH},
                              {"query": bm25.query_sparse(q), "using": "bm25", "limit": PREFETCH}],
@@ -157,6 +172,9 @@ def _retrieve(q: str, k: int) -> tuple[list[dict], dict, int]:
     except Exception:
         raise Unavailable("база недоступна")
     t2 = time.perf_counter()
+    METRICS.observe("search_stage_seconds", {"stage": "qdrant"}, t2 - t1)
+    if attempts > 1:
+        METRICS.inc("search_qdrant_retries_total", value=attempts - 1)
     hits = [{
         "score": round(h["score"], 4),
         "document": h["payload"].get("title"),
@@ -194,6 +212,7 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
     try:
         hits, timing, attempts = _retrieve(q, k)
     except Unavailable as e:
+        METRICS.inc("search_answer_total", {"result": "error"})
         return _error(str(e))
     tokens = {"prompt": None, "output": None}
     if hits:
@@ -202,18 +221,23 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
             reply = _call(f"{OLLAMA_URL}/api/chat", answering.chat_body(ANSWER_MODEL, q, hits), timeout=ANSWER_TIMEOUT)
         except urllib.error.HTTPError as e:
             e.close()
+            METRICS.inc("search_answer_total", {"result": "error"})
             if e.code == 429:  # фильтр пускает к модели один запрос за раз
                 return _error("модель занята, повторите позже", 429)
             return _error("модель недоступна")
         except Exception:
+            METRICS.inc("search_answer_total", {"result": "error"})
             return _error("модель недоступна")
+        METRICS.observe("search_stage_seconds", {"stage": "generate"}, time.perf_counter() - t0)
         timing["generate"] = _ms(time.perf_counter() - t0)
         tokens = {"prompt": reply.get("prompt_eval_count"), "output": reply.get("eval_count")}
         checked = answering.check(answering.parse((reply.get("message") or {}).get("content", "")), hits, q)
     else:  # кусков нет: модели нечего читать
         checked = {"status": "refused", "answer": answering.refusal(q), "citations": []}
     if checked["status"] == "invalid":
+        METRICS.inc("search_answer_total", {"result": "error"})
         return _error("модель ответила не по формату", 502)
+    METRICS.inc("search_answer_total", {"result": checked["status"]})
     checked.pop("model_answer", None)  # неподтверждённый ответ модели наружу не отдаём
     return {
         "query": q, "model": ANSWER_MODEL, "collection": COLLECTION,

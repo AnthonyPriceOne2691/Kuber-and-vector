@@ -45,6 +45,17 @@ served=$(for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
 done | sort | uniq -c | tr '\n' ' ')
 echo "    кто ответил на 12 запросов: $served"
 code() { curl -s -o /dev/null -w '%{http_code}' --cacert "$CA" "$@"; }
+
+echo "мониторинг (machine-4) и шлюз Qdrant"
+M1="$(ip_of machine-1)"
+check "Prometheus: все цели отвечают" bash -c "limactl shell machine-4 curl -sf 'http://127.0.0.1:9090/api/v1/query?query=min(up)' | $PY -I -c 'import json,sys; r=json.load(sys.stdin)[\"data\"][\"result\"]; assert r and r[0][\"value\"][1]==\"1\"'"
+check "Grafana отвечает на localhost machine-4" limactl shell machine-4 curl -sf -o /dev/null http://127.0.0.1:3000/api/health
+check "Grafana не видна из сети машин" not limactl shell machine-1 curl -s -m 3 -o /dev/null "http://$ENTRY:3000/"
+check "node_exporter machine-1 закрыт для machine-2" not limactl shell machine-2 curl -s -m 3 -o /dev/null "http://$M1:9100/metrics"
+check "метрики через вход не видны (404)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' 'https://$ENTRY/metrics') = 404 ]"
+check "шлюз Qdrant отдаёт machine-4 состояние кластера" bash -c "limactl shell machine-4 curl -sf -m 3 http://$M1:30633/cluster | grep -q peers"
+check "шлюз Qdrant не отдаёт точки (404)" bash -c "[ \$(limactl shell machine-4 curl -s -m 3 -o /dev/null -w '%{http_code}' http://$M1:30633/collections/contracts_rf2/points/scroll) = 404 ]"
+check "шлюз Qdrant закрыт для machine-2" not limactl shell machine-2 curl -s -m 3 -o /dev/null "http://$M1:30633/cluster"
 check "без ключа API 401" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' 'https://$ENTRY/search?q=$Q') = 401 ]"
 check "чужой ключ API 401" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' -H 'X-API-Key: guess' 'https://$ENTRY/search?q=$Q') = 401 ]"
 # последняя проверка входа: после неё адрес Мака около 10 с получает 429 на всё

@@ -1,5 +1,6 @@
 # HAProxy на machine-4: вход стенда, в облаке на его месте был бы балансировщик провайдера.
-# Снаружи открыт только 443 (TLS). API Kubernetes и статистика слушают только localhost машины.
+# Снаружи открыт только 443 (TLS). API Kubernetes, статистика и метрики Prometheus слушают
+# только localhost машины.
 # Поиск и ответ только по ключу API (заголовок X-API-Key, список ключей в /etc/haproxy/api-keys.map,
 # его создаёт install.sh); перебор ключей и слишком частые запросы с одного адреса получают 429.
 # Строки серверов (@SEARCH_SERVERS@, @ANSWER_SERVERS@, @API_SERVERS@) подставляет install.sh по адресам узлов.
@@ -90,6 +91,8 @@ backend kube-api
 
 frontend stats
     bind 127.0.0.1:8404
+    # метрики для Prometheus на этой же машине (экспортёр встроен в деб 2.8.30)
+    http-request use-service prometheus-exporter if { path /metrics }
     stats enable
     stats uri /stats
     stats refresh 2s

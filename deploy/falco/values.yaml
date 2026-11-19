@@ -104,3 +104,18 @@ customRules:
         to=%fd.sip:%fd.sport res=%evt.res)
       priority: WARNING
       tags: [stand, network]
+
+# Метрики для Prometheus на machine-4: счётчики сработавших правил и потерь событий ядра.
+# Вебсервер Falco отдаёт их на 8765 (/metrics); снаружи NodePort 30765 и правило сети
+# из deploy/monitoring/k8s.yaml пускают только machine-4. Свой Service чарта не нужен.
+metrics:
+  enabled: true
+  rulesCountersEnabled: true
+  kernelEventCountersEnabled: true
+  resourceUtilizationEnabled: false
+  stateCountersEnabled: false
+  libbpfStatsEnabled: false
+  pluginsMetricsEnabled: false
+  kernelIterEventCountersEnabled: false
+  service:
+    create: false

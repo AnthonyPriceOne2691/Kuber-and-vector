@@ -1,0 +1,85 @@
+# Шлюз к Qdrant для Prometheus и панели на machine-4 (код deploy/qdrant/gate.py). Ставит
+# deploy/qdrant/gate-install.sh: он создаёт ConfigMap с кодом и подставляет ENTRY_IP
+# (адрес machine-4) и QDRANT_LOCAL_CLUSTER_IP (сервис qdrant-local из local-svc.yaml).
+# Образ тот же, что у поиска (localhost/search:stage2, в нём Python 3.13): новых загрузок нет.
+# Правила сети дополняют deploy/qdrant/netpol.yaml, сам он не меняется.
+apiVersion: v1
+kind: Service
+metadata: {name: qdrant-gate, namespace: qdrant}
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local  # каждая машина отвечает своим шлюзом и своим пиром
+  selector: {app: qdrant-gate}
+  ports: [{name: http, port: 9633, targetPort: 9633, nodePort: 30633, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: qdrant-gate, namespace: qdrant}
+spec:
+  podSelector: {matchLabels: {app: qdrant-gate}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ipBlock: {cidr: ENTRY_IP/32}}]
+      ports: [{port: 9633, protocol: TCP}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app.kubernetes.io/name: qdrant}}}]
+      ports: [{port: 6333, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: qdrant-from-gate, namespace: qdrant}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: qdrant}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: qdrant-gate}}}]
+      ports: [{port: 6333, protocol: TCP}]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: qdrant-gate, namespace: qdrant}
+spec:
+  selector: {matchLabels: {app: qdrant-gate}}
+  template:
+    metadata:
+      labels: {app: qdrant-gate}  # не метки Qdrant: иначе шлюз попал бы в его сервисы и правила
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: gate
+          image: localhost/search:stage2
+          imagePullPolicy: Never
+          command: ["python", "-I", "-B", "/gate/gate.py"]
+          env:
+            - {name: QDRANT_URL, value: "http://QDRANT_LOCAL_CLUSTER_IP:6333"}
+            - {name: KEY_FILE, value: /run/secrets/qdrant/read-only-api-key}
+          ports:
+            - {name: http, containerPort: 9633}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: code, mountPath: /gate, readOnly: true}
+            - {name: key, mountPath: /run/secrets/qdrant, readOnly: true}
+      volumes:
+        - name: code
+          configMap: {name: qdrant-gate-code}
+        - name: key
+          secret:
+            secretName: qdrant-keys
+            items: [{key: read-only-api-key, path: read-only-api-key}]  # админский ключ сюда не попадает
+            defaultMode: 0440

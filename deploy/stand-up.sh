@@ -5,7 +5,8 @@
 #   deploy/stand-up.sh
 # Повторный запуск безопасен: готовые шаги пропускаются или повторяются без вреда.
 # Нужно заранее: Lima и socket_vmnet (deploy/vm/README.md), комплект kit/vm, Ollama с bge-m3
-# на Маке, подготовленные куски (python3 -I eval/prepare.py), комплект Falco (kit-build.sh falco).
+# на Маке, подготовленные куски (python3 -I eval/prepare.py), комплекты Falco и мониторинга
+# (kit-build.sh falco, kit-build.sh monitoring).
 # Пишется под системный bash 3.2 на macOS.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -53,6 +54,12 @@ step "вход на machine-4"
 
 step "сторож Falco"
 "$HERE/falco/install.sh" machine-1
+
+step "шлюз Qdrant для мониторинга и панели"
+"$HERE/qdrant/gate-install.sh" machine-1 machine-4
+
+step "мониторинг на machine-4"
+"$HERE/monitoring/install.sh" machine-4
 
 step "проверка"
 "$HERE/check.sh"

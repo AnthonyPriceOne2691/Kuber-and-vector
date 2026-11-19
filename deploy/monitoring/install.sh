@@ -167,8 +167,11 @@ if [ -n "$B" ]; then sed "s|@BUNDLED_PLUGINS@|$B|" "$I/grafana.ini"; else sed '/
 if [ ! -s /etc/grafana/admin-password ]; then
   ( umask 027; openssl rand -hex 16 > /etc/grafana/admin-password )
 fi
-chgrp grafana /etc/grafana/admin-password /etc/grafana/grafana.ini
-chmod 0640 /etc/grafana/admin-password /etc/grafana/grafana.ini
+if [ ! -s /etc/grafana/secret-key ]; then
+  ( umask 027; openssl rand -hex 32 > /etc/grafana/secret-key )
+fi
+chgrp grafana /etc/grafana/admin-password /etc/grafana/secret-key /etc/grafana/grafana.ini
+chmod 0640 /etc/grafana/admin-password /etc/grafana/secret-key /etc/grafana/grafana.ini
 install -m 0644 "$I/datasource.yaml" /etc/grafana/provisioning/datasources/prometheus.yaml
 install -m 0644 "$I/dashboards.yaml" /etc/grafana/provisioning/dashboards/stand.yaml
 install -m 0644 "$I/stand.json" /etc/grafana/dashboards/stand.json
