@@ -1,9 +1,14 @@
-"""Этап 1, на Маке: мини-выборка LegalBench-RAG, нарезка, векторы bge-m3 через Ollama.
+"""На Маке: выборка LegalBench-RAG, нарезка, векторы bge-m3 через Ollama.
 
     python3 -I eval/prepare.py --check-only        только сверить мини-выборку со статьёй
-    python3 -I eval/prepare.py                     нарезать, посчитать векторы, записать файлы
+    python3 -I eval/prepare.py                     мини: нарезать, посчитать векторы, записать файлы
+    python3 -I eval/prepare.py --full --check-only полный набор: только посчитать документы и знаки
+    python3 -I eval/prepare.py --full              полный корпус (714 документов) и полный тест
 
-Результат в cache/stage1/:
+Мини (по умолчанию) пишет в cache/stage1/, полный в cache/full/ и только ветку naive500_title,
+без разреженных векторов BM25 у кусков (в кластер идёт режим dense, а BM25 у полного корпуса это
+сотни мегабайт в памяти и на диске). Векторы считаются докачиваемо: прерванный запуск продолжит
+с того же места (кэш cache/embeddings). Результат:
     <стратегия>/points.jsonl   id, dataset, file, start, end, text (порядок = порядок векторов)
     <стратегия>/vectors.f32    float32 подряд
     queries.jsonl, query_vectors.f32, meta.json (замеры скорости)
@@ -74,17 +79,27 @@ def title_of(file: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=str(ROOT / "data/legalbenchrag"))
-    ap.add_argument("--out", default=str(ROOT / "cache/stage1"))
+    ap.add_argument("--full", action="store_true", help="полный корпус и полный тест вместо мини-выборки")
+    ap.add_argument("--out", default=None)
     ap.add_argument("--model", default="bge-m3")
-    ap.add_argument("--strategies", default="naive500,naive500_title")
+    ap.add_argument("--ollama", default="http://127.0.0.1:11434")
+    ap.add_argument("--embed-cache", default=str(ROOT / "cache/embeddings"))
+    ap.add_argument("--strategies", default=None)
+    ap.add_argument("--sparse", choices=("auto", "yes", "no"), default="auto",
+                    help="BM25 у кусков: auto значит да для мини и нет для полного")
     ap.add_argument("--check-only", action="store_true")
     args = ap.parse_args()
+    out_default = "cache/full" if args.full else "cache/stage1"
+    args.out = args.out or str(ROOT / out_default)
+    strategies = args.strategies or ("naive500_title" if args.full else "naive500,naive500_title")
+    with_sparse = args.sparse == "yes" or (args.sparse == "auto" and not args.full)
 
     selected: dict[str, list[dict]] = {}
     for name in lb.DATASETS:
-        selected[name] = lb.select_mini(lb.load_tests(args.data, name))
+        tests = lb.load_tests(args.data, name)
+        selected[name] = tests if args.full else lb.select_mini(tests)
 
-    print("Мини-выборка против статьи (документов, знаков):")
+    print("Полный набор (документов, знаков):" if args.full else "Мини-выборка против статьи (документов, знаков):")
     docs: dict[str, str] = {}
     all_ok = True
     for name in lb.DATASETS:
@@ -93,23 +108,30 @@ def main() -> None:
         for f in files:
             docs[f] = lb.read_doc(args.data, f)
             chars += len(docs[f])
+        if args.full:
+            print(f"  {name:12s} вопросов {len(selected[name]):5d}  документов {len(files):3d}  знаков {chars:>11,}")
+            continue
         want = lb.PAPER_MINI_CORPUS[name]
         ok = (len(files), chars) == want
         all_ok &= ok
         print(f"  {name:12s} вопросов {len(selected[name]):4d}  документов {len(files):3d} (статья {want[0]})"
               f"  знаков {chars:>10,} (статья {want[1]:>10,})  {'совпало' if ok else 'РАСХОЖДЕНИЕ'}")
     total_docs, total_chars = len(docs), sum(len(t) for t in docs.values())
-    print(f"  всего документов {total_docs} (статья 72), знаков {total_chars:,} (статья 8,682,104)")
+    if args.full:
+        print(f"  всего документов {total_docs}, знаков {total_chars:,}, вопросов {sum(map(len, selected.values()))}")
+    else:
+        print(f"  всего документов {total_docs} (статья 72), знаков {total_chars:,} (статья 8,682,104)")
     if args.check_only:
         sys.exit(0 if all_ok else 1)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    emb = OllamaEmbedder(model=args.model, cache_dir=str(ROOT / "cache/embeddings"))
-    meta: dict = {"model": args.model, "datasets": {n: len(selected[n]) for n in lb.DATASETS},
-                  "docs": total_docs, "chars": total_chars, "strategies": {}}
+    emb = OllamaEmbedder(model=args.model, url=args.ollama, cache_dir=args.embed_cache)
+    meta: dict = {"model": args.model, "selection": "full" if args.full else "mini",
+                  "datasets": {n: len(selected[n]) for n in lb.DATASETS},
+                  "docs": total_docs, "chars": total_chars, "sparse": with_sparse, "strategies": {}}
 
-    for strategy in args.strategies.split(","):
+    for strategy in strategies.split(","):
         # «naive500_title»: та же нарезка, но к тексту для поиска (вектор и BM25) приписан префикс
         # «Document: … / Section: …» (contextual embeddings без LLM). Адрес и смещения куска те же.
         base, _, variant = strategy.partition("_")
@@ -128,7 +150,7 @@ def main() -> None:
             if variant == "title":
                 prefix = f"Document: {p['title']}\n" + (f"Section: {p['section']}\n" if p["section"] else "") + "\n"
             p["index_text"] = prefix + p["text"]
-        avgdl = sum(len(bm25.tokens(p["index_text"])) for p in points) / max(len(points), 1)
+        avgdl = sum(len(bm25.tokens(p["index_text"])) for p in points) / max(len(points), 1) if with_sparse else 0.0
         print(f"{strategy}: кусков {len(points)}")
         before_n, before_s = emb.computed, emb.seconds
         t0 = time.perf_counter()
@@ -140,7 +162,8 @@ def main() -> None:
         with open(d / "points.jsonl", "w", encoding="utf-8") as fp, open(d / "vectors.f32", "wb") as fv:
             for p in points:
                 index_text = p.pop("index_text")
-                p["sparse"] = bm25.doc_sparse(index_text, avgdl)
+                if with_sparse:
+                    p["sparse"] = bm25.doc_sparse(index_text, avgdl)
                 fp.write(json.dumps(p, ensure_ascii=False) + "\n")
                 emb.vector(index_text).tofile(fv)
         meta["strategies"][strategy] = {
@@ -159,6 +182,7 @@ def main() -> None:
             emb.vector(q["query"]).tofile(fv)
     meta["queries"] = len(queries)
     meta["dim"] = emb.dim
+    emb.close()
     with open(out / "meta.json", "w") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"готово: {out}  (вопросов {len(queries)}, размерность {emb.dim})")

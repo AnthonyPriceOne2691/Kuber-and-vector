@@ -8,11 +8,16 @@
 # К Qdrant ходим через kubectl port-forward: это туннель через API Kubernetes под RBAC,
 # поэтому NetworkPolicy («Qdrant принимает только поиск и своих пиров») загрузке не мешает.
 #   deploy/qdrant/load.sh [machine-1]
+# Другой корпус или другие схемы задаются окружением, например полный корпус:
+#   SRC=cache/full/naive500_title SETS="contracts_full_rf2:6:2" deploy/qdrant/load.sh
+#   LOAD_OPTS="--quantization int8 --on-disk" для замера предела (см. eval/qdrant_load.py)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 VM="${1:-machine-1}"
-SRC="$ROOT/cache/stage1/naive500_title"
+SRC="${SRC:-cache/stage1/naive500_title}"; case "$SRC" in /*) ;; *) SRC="$ROOT/$SRC" ;; esac
+SETS="${SETS:-contracts_rf2:6:2 contracts_rf3:3:3}"  # имя:шардов:копий
+LOAD_OPTS="${LOAD_OPTS:-}"
 REMOTE=/home/ops.guest/load
 [ -f "$SRC/points.jsonl" ] || { echo "нет $SRC: сначала python3 -I eval/prepare.py"; exit 1; }
 
@@ -20,11 +25,11 @@ limactl shell "$VM" sudo rm -rf "$REMOTE"
 limactl shell "$VM" mkdir -p "$REMOTE"
 limactl copy "$ROOT/eval/qdrant_load.py" "$VM:$REMOTE/qdrant_load.py"
 limactl copy "$HERE/placement.py" "$VM:$REMOTE/placement.py"
-limactl copy -r "$SRC" "$VM:$REMOTE/naive500_title"
+limactl copy -r "$SRC" "$VM:$REMOTE/data"
 
-limactl shell --workdir "$REMOTE" "$VM" sudo bash -s -- "$REMOTE" <<'EOS'
+limactl shell --workdir "$REMOTE" "$VM" sudo bash -s -- "$REMOTE" "$SETS" "$LOAD_OPTS" <<'EOS'
 set -euo pipefail
-cd "$1"
+cd "$1"; SETS=$2; LOAD_OPTS=$3
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 K=$(mktemp -d); PF=""
 trap 'kill $PF 2>/dev/null; rm -rf "$K"' EXIT
@@ -35,8 +40,14 @@ forward() { # $1 цель (svc/qdrant или pod/qdrant-N), $2 локальны�
   echo "port-forward $1 не поднялся"; return 1
 }
 forward svc/qdrant 16333
-python3 -I -B qdrant_load.py --url http://127.0.0.1:16333 --key-file "$K/rw" --dir naive500_title --collection contracts_rf2 --shards 6 --replicas 2
-python3 -I -B qdrant_load.py --url http://127.0.0.1:16333 --key-file "$K/rw" --dir naive500_title --collection contracts_rf3 --shards 3 --replicas 3
+names=""
+for set in $SETS; do
+  IFS=: read -r name shards replicas <<< "$set"
+  # shellcheck disable=SC2086  # LOAD_OPTS это список флагов
+  python3 -I -B qdrant_load.py --url http://127.0.0.1:16333 --key-file "$K/rw" --dir data --collection "$name" \
+    --shards "$shards" --replicas "$replicas" $LOAD_OPTS
+  names="$names $name"
+done
 # карта шардов: каждого пира спрашиваем через свой туннель
 : > "$K/pods"; port=16340
 for pod in $(kubectl -n qdrant get pods -o jsonpath='{.items[*].metadata.name}'); do
@@ -44,6 +55,7 @@ for pod in $(kubectl -n qdrant get pods -o jsonpath='{.items[*].metadata.name}')
   echo "$pod $(kubectl -n qdrant get pod "$pod" -o jsonpath='{.spec.nodeName}') $port" >> "$K/pods"
   port=$((port + 1))
 done
-python3 -I -B placement.py "$K/rw" "$K/pods" contracts_rf2 contracts_rf3
+# shellcheck disable=SC2086
+python3 -I -B placement.py "$K/rw" "$K/pods" $names
 EOS
 limactl shell "$VM" sudo rm -rf "$REMOTE"

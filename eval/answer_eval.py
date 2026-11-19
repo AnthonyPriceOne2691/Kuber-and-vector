@@ -260,6 +260,7 @@ def main() -> None:
             for q in todo:
                 if "vector" not in q:
                     q["vector"] = emb.vector(q["query"])
+            emb.close()
         print(f"вопросов {len(questions)}, готово раньше {len(questions) - len(todo)}, осталось {len(todo)}", flush=True)
         with open(out, "a", encoding="utf-8") as f:
             for i, q in enumerate(todo, 1):
