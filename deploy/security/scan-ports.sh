@@ -6,7 +6,7 @@
 #   deploy/security/scan-ports.sh
 #   RATE=3000 пакетов в секунду (по умолчанию); KEEP=1 оставить машину «снаружи» после скана
 # Итог: runs/security/<время>/nmap-tcp.xml, nmap-udp.xml, knock.txt и сводка summary.md.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

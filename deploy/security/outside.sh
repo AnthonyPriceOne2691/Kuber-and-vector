@@ -8,7 +8,7 @@
 #   deploy/security/outside.sh trivy         поставить trivy и его базу (1,8 ГБ, для scan-images.sh)
 #   deploy/security/outside.sh down          удалить
 # 1 vCPU и 2 ГБ: trivy на образах берёт около гигабайта (оценка, мерить на прогоне).
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

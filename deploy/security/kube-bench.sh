@@ -8,7 +8,7 @@
 #   deploy/security/kube-bench.sh [machine-1]
 #   BENCHMARK=k3s-cis-1.9 по умолчанию
 # Итог: runs/security/<время>/kube-bench.json и сводка summary.md.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

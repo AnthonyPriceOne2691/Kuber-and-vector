@@ -6,7 +6,7 @@
 #   deploy/security/scan-images.sh [machine-1]
 #   KEEP=1 оставить машину «снаружи» после скана
 # Итог: runs/security/<время>/trivy/*.json и сводка summary.md.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
