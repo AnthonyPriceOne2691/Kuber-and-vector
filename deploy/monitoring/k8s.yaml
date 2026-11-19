@@ -21,7 +21,7 @@ spec:
 ---
 # «Запрещено всё, кроме нужного»: к подам Falco входящие только с machine-4 на порт метрик.
 # Других входящих Falco не нужно; пробы kubelet идут с самой машины, их правила сети k3s
-# пропускают (так уже работают пробы поиска при запрете входа). Исходящие не трогаем.
+# пропускают (так уже работают пробы поиска при запрете входа). Исходящие ниже (falco-egress).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: falco-metrics-ingress, namespace: falco}
@@ -33,3 +33,18 @@ spec:
     - from:
         - ipBlock: {cidr: ENTRY_IP/32}
       ports: [{port: 8765, protocol: TCP}]
+---
+# Исходящие Falco: только тревоги в панель на machine-4 (http_output на 8090, deploy/panel).
+# Больше сторожу сеть не нужна: имена подов он берёт из сокета containerd на своей машине,
+# falcoctl выключен, адрес панели задан IP, без DNS. Решение владельца 19.11 («да, по рекомендациям»).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: falco-egress, namespace: falco}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: falco, app.kubernetes.io/instance: falco}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock: {cidr: ENTRY_IP/32}
+      ports: [{port: 8090, protocol: TCP}]

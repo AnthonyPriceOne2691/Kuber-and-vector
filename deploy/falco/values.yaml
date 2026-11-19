@@ -70,7 +70,8 @@ customRules:
   stand-rules.yaml: |-
     # Правила стенда: как ведёт себя под поиска. Сервис это один процесс python3 (uvicorn),
     # он ходит только в Qdrant (6333) и в фильтр Ollama на Маке (11434). Всё остальное в его
-    # контейнере значит, что внутри человек или чужой код.
+    # контейнере значит, что внутри человек или чужой код. Тексты правил по-английски: их видно
+    # в ленте панели, а ролик на английском (решение владельца 19.11).
     - list: stand_shells
       items: [sh, bash, dash, ash, zsh, ksh]
 
@@ -78,48 +79,48 @@ customRules:
       condition: (container.id != host and k8s.ns.name = "search")
 
     - rule: Stand shell in search pod
-      desc: В контейнере сервиса поиска запущена командная оболочка. Сервису она не нужна.
+      desc: A command shell started in the search service container. The service never needs one.
       condition: spawned_process and stand_search_container and proc.name in (stand_shells)
       output: >
-        Оболочка в поде поиска (pod=%k8s.pod.name proc=%proc.name parent=%proc.pname
+        Shell in search pod (pod=%k8s.pod.name proc=%proc.name parent=%proc.pname
         cmd=%proc.cmdline uid=%user.uid)
       priority: WARNING
       tags: [stand, shell]
 
     - rule: Stand unexpected process in search pod
       desc: >
-        В поде поиска запущен процесс, которого у сервиса нет. Служебный runc init от kubectl exec
-        не считаем: саму оболочку ловит правило выше.
+        A process the search service never runs started in its pod. The runc init helper of
+        kubectl exec does not count; the shell itself is caught by the rule above.
       condition: >
         spawned_process and stand_search_container and not proc.name in (stand_shells)
         and not proc.pname = runc
         and (not proc.name startswith python or proc.pname in (stand_shells))
       output: >
-        Чужой процесс в поде поиска (pod=%k8s.pod.name proc=%proc.name parent=%proc.pname
+        Unexpected process in search pod (pod=%k8s.pod.name proc=%proc.name parent=%proc.pname
         cmd=%proc.cmdline uid=%user.uid)
       priority: WARNING
       tags: [stand, process]
 
     - rule: Stand Qdrant key read from shell
-      desc: Ключ Qdrant читает процесс, запущенный из оболочки, а не сам сервис.
+      desc: The Qdrant key is read by a process started from a shell, not by the service itself.
       condition: >
         open_read and stand_search_container and fd.name startswith /run/secrets/qdrant
         and proc.pname in (stand_shells)
       output: >
-        Ключ Qdrant читают из оболочки (pod=%k8s.pod.name proc=%proc.cmdline file=%fd.name)
+        Qdrant key read from a shell (pod=%k8s.pod.name proc=%proc.cmdline file=%fd.name)
       priority: CRITICAL
       tags: [stand, credentials]
 
     - rule: Stand forbidden connection from search pod
       desc: >
-        Под поиска соединяется не с Qdrant и не с фильтром Ollama (успешно или нет). В Falco 0.45
-        событий входа в вызов нет, connect виден один раз, на выходе.
+        The search pod connects somewhere other than Qdrant or the Ollama filter, whether or not
+        the connection succeeds. Falco 0.45 has no syscall enter events, so connect is seen once, on exit.
       condition: >
         evt.type = connect and stand_search_container
         and (fd.typechar = 4 or fd.typechar = 6) and not fd.sport in (6333, 11434)
         and fd.sip != "0.0.0.0" and not fd.snet in ("127.0.0.0/8")
       output: >
-        Запрещённое соединение из пода поиска (pod=%k8s.pod.name proc=%proc.cmdline
+        Forbidden connection from search pod (pod=%k8s.pod.name proc=%proc.cmdline
         to=%fd.sip:%fd.sport res=%evt.res)
       priority: WARNING
       tags: [stand, network]

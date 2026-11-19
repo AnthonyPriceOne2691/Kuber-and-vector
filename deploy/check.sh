@@ -175,6 +175,7 @@ check "событие без токена отклоняется (403)" bash -c 
 check "порт событий 8090 закрыт для Мака" not curl -s -m 3 -o /dev/null "http://$ENTRY:8090/"
 check "страница на Маке: http://127.0.0.1:18090 (проброс Lima при создании machine-4)" curl -sf -m 3 -o /dev/null http://127.0.0.1:18090/healthz
 check "Falco знает адрес панели (Secret falco-panel-output и том в DaemonSet)" panel_falco_wired
+check "Falco выходит в сеть только в панель (правило falco-egress, machine-4:8090)" bash -c "[ \"\$(limactl shell machine-1 sudo k3s kubectl -n falco get networkpolicy falco-egress -o jsonpath='{.spec.egress[*].to[*].ipBlock.cidr} {.spec.egress[*].ports[*].port}')\" = \"$ENTRY/32 8090\" ]"
 if [ "${CHECK_FALCO:-0}" = 1 ]; then  # запускает оболочку в поде поиска, в ленте панели появится тревога
   check "тревога Falco доходит до ленты панели" panel_falco_event
 fi

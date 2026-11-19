@@ -45,6 +45,16 @@ rules:
     resources:
       - group: coordination.k8s.io
         resources: ["leases"]
+  # Чтения панели (узлы, поды, аренды kubelet раз в 2 с, deploy/panel) тоже шум. Только эти
+  # ресурсы: если её токен попросит что-то ещё, например secrets, запрос и отказ в журнал попадут.
+  - level: None
+    users: ["system:serviceaccount:stand-panel:panel-reader"]
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+        resources: ["nodes", "pods"]
+      - group: coordination.k8s.io
+        resources: ["leases"]
   - level: Metadata
 EOF
 
