@@ -24,7 +24,10 @@ case "${1:-up}" in
       limactl create --tty=false --name "$VM" \
         --set '.param.ROLE = "outside" | .cpus = 1 | .memory = "2GiB"' "$ROOT/deploy/vm/machine.yaml"
     fi
-    limactl start --tty=false "$VM" >/dev/null
+    # уже запущенную не трогаем: limactl start напечатал бы две строки журнала в вывод скана (ролик)
+    if [ "$(limactl list --format '{{.Status}}' "$VM" 2>/dev/null)" != Running ]; then
+      limactl start --tty=false "$VM" >/dev/null
+    fi
     if ! limactl shell "$VM" bash -c 'command -v nmap' >/dev/null 2>&1; then
       limactl shell "$VM" bash -c 'rm -rf /tmp/kit-debs && mkdir -p /tmp/kit-debs /tmp/apt-no-sources'
       for f in "$KIT"/debs/*.deb; do limactl copy "$f" "$VM:/tmp/kit-debs/"; done
