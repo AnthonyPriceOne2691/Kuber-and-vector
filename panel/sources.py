@@ -796,6 +796,11 @@ class ServiceChecks(Source):
 FALCO_LEVELS = {"emergency": "error", "alert": "error", "critical": "error", "error": "error",
                 "warning": "warn", "notice": "warn", "informational": "info", "info": "info",
                 "debug": "info"}
+# Время события от отправителя берём, только если оно не дальше CLOCK_SKEW_S от времени приёма. Доставка
+# занимает миллисекунды, а 20.11 тревоги Falco пришли со временем на 16 минут раньше настоящего: Мак уснул,
+# машины стенда стояли на паузе, Lima потом подвела их часы рывком, а Falco считает время событий от
+# отметки, снятой при своём старте, и продолжал отставать на время сна. Такие тревоги ложились в низ ленты.
+CLOCK_SKEW_S = 5.0
 
 
 class RateLimited(Exception):
@@ -889,7 +894,7 @@ class EventsSource:
             kind = payload.get("kind") or "security"
             source = payload.get("source") or "external"
         ts = parse_time(payload.get("time", payload.get("ts")))
-        if ts is None or abs(ts - now) > 86400:
+        if ts is None or abs(ts - now) > CLOCK_SKEW_S:  # чужие часы: в ленту по времени приёма
             ts = now
         return self.add(title, level=level, kind=kind, detail=detail, machine=machine, pod=pod,
                         ts=ts, source=source)

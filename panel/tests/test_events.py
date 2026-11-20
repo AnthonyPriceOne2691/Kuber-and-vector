@@ -99,6 +99,18 @@ class IngestTest(unittest.TestCase):
         e = ev.ingest({"title": "clock skew", "ts": 1.0}, now=1_000_000.0)
         self.assertEqual(e["ts"], 1_000_000.0)  # время из будущего или прошлого — заменяем временем приёма
 
+    def test_falco_clock_behind_after_host_sleep(self):
+        # 20.11: после сна Мака Falco отставал на 963 с, тревога легла бы под события панели десятиминутной давности
+        ev = EventsSource()
+        arrival = parse_time("2026-11-18T10:28:04Z")
+        ev.add("Load generator running", ts=arrival - 600)
+        e = ev.ingest(dict(FALCO), now=arrival)  # время Falco 10:12:01, на 963 с раньше приёма
+        self.assertEqual(e["ts"], arrival)
+        self.assertEqual(ev.recent()[0]["title"], "Terminal shell in container")
+        # обычная задержка доставки и мелкий разнобой часов: время отправителя остаётся
+        near = ev.ingest(dict(FALCO, rule="r-near"), now=parse_time("2026-11-18T10:12:04Z"))
+        self.assertAlmostEqual(near["ts"], parse_time("2026-11-18T10:12:01.123456Z"), places=3)
+
     def test_rate_limit(self):
         ev = EventsSource(rate=0.001, burst=3)
         for i in range(3):
