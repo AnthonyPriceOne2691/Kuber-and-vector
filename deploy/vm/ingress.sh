@@ -6,7 +6,7 @@
 #   deploy/vm/ingress.sh status    сколько пакетов отбито на каждой машине
 #   deploy/vm/ingress.sh off       снять со всех машин, если на стенде что-то сломалось
 # Встроенную сеть Lima (eth0) фильтр не трогает, поэтому ssh и limactl работают и при ошибке в правилах.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 20.11 при подъёме с нуля (QUIET=1 deploy/stand-up.sh, проверки 66 из 66).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PY="${PY:-/opt/homebrew/bin/python3}"

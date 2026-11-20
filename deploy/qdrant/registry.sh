@@ -10,7 +10,7 @@
 #   deploy/qdrant/registry.sh drop contracts_mislabeled            удалить подложенную коллекцию и запись
 # REGISTER_AS=bge-m3 подписывает набор не той моделью, что в meta.json: только для подложенной ошибки
 # (deploy/scenes/model-switch.sh). Вывод по-английски: он идёт в кадр.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 20.11 в сцене смены модели (deploy/scenes/model-switch.sh).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

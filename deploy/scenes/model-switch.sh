@@ -15,7 +15,7 @@
 # Нужно заранее: BASE и NEW загружены и записаны в реестр (deploy/qdrant/load.sh пишет сам, уже
 # загруженные: deploy/qdrant/registry.sh register), образ поиска с SEARCH_ALIAS (deploy/search/k8s.yaml),
 # фильтр Ollama на Маке пускает обе модели (deploy/host/filter.sh). Итоги в runs/model-switch-*/.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 20.11, последний раз для ролика (runs/model-switch-20261120-212015).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"

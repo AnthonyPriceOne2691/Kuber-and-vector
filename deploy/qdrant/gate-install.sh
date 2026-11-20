@@ -4,7 +4,7 @@
 # на машинах (deploy/search/build.sh): шлюз работает на его Python.
 #   deploy/qdrant/gate-install.sh [machine-1] [machine-4]
 # Повторный запуск безопасен: код обновляется, поды перезапускаются по одному.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 20.11 при подъёме с нуля (QUIET=1 deploy/stand-up.sh, проверки 66 из 66).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VM="${1:-machine-1}"

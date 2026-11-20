@@ -7,7 +7,7 @@
 # (штатный способ k3s остановить обновление встроенного манифеста); NodeHosts k3s обновляет по-прежнему.
 #   deploy/k3s/coredns-local.sh [machine-1]
 #   SERVERS="machine-1 machine-2 machine-3" по умолчанию
-# Повторный запуск безопасен. Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Повторный запуск безопасен. Пишется под системный bash 3.2 на macOS. Прогнан на стенде 20.11 при подъёме с нуля (QUIET=1 deploy/stand-up.sh, проверки 66 из 66).
 set -euo pipefail
 VM="${1:-machine-1}"
 SERVERS="${SERVERS:-machine-1 machine-2 machine-3}"

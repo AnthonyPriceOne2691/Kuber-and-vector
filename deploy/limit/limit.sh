@@ -13,7 +13,7 @@
 #   STAGES="100000 250000 500000 1000000"; RATES="5 10 20 30 40 50"; WARM=10; MEASURE=60;
 #   QUANT=int8 или none; ON_DISK=1; KEEP=1 оставить коллекцию после прогона;
 #   QUESTIONS=panel/questions.txt; GUARD_OPTS и QPS_OPTS флаги для limit_synth.py load и limit_qps.py.
-# Пишется под системный bash 3.2 на macOS. На живом стенде ещё не проверялся.
+# Пишется под системный bash 3.2 на macOS. Прогнан на стенде 19.11, итоги в eval/results/limit.md.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
