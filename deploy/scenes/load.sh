@@ -29,9 +29,11 @@ case "${1:-}" in
     limactl copy "$ROOT/runs/stand-ca.pem" "$VM:$DIR/ca.pem"
     limactl copy "$ROOT/runs/entry-api-key" "$VM:$DIR/key"
     limactl shell "$VM" chmod 600 "$DIR/key"
+    # stdin из /dev/null: из терминала (съёмка ролика, псевдотерминал) limactl shell выделяет сессии tty, и фоновый
+    # генератор гибнет вместе с ней, не успев открыть журнал (20.11); без терминала запуск был как раньше
     limactl shell --workdir "$DIR" "$VM" bash -c "setsid nohup python3 -I -B loadgen.py --url https://$ENTRY/search \
       --cafile ca.pem --api-key-file key --rate $RATE --timeout 2 --retry other --questions questions.txt \
-      --stats-file $STATS --quiet > $DIR/loadgen.log 2>&1 < /dev/null &"
+      --stats-file $STATS --quiet > $DIR/loadgen.log 2>&1 < /dev/null &" < /dev/null
     for _ in $(seq 1 20); do limactl shell "$VM" test -s "$STATS" && break; sleep 1; done
     limactl shell "$VM" test -s "$STATS" || { echo "load generator did not start:"; limactl shell "$VM" cat "$DIR/loadgen.log"; exit 1; }
     echo "load: $RATE requests per second to https://$ENTRY/search (snapshot for the panel: $STATS)" ;;
