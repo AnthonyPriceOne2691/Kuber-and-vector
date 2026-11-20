@@ -51,7 +51,7 @@
       "facts": [
         {
           "label": "requests",
-          "value": 3371
+          "value": 3497
         },
         {
           "label": "retried",
@@ -59,12 +59,12 @@
         },
         {
           "label": "cluster marked the machine dead after",
-          "value": 25,
+          "value": 18,
           "unit": "s"
         },
         {
           "label": "search moved to live machines after",
-          "value": 55,
+          "value": 48,
           "unit": "s"
         }
       ]
@@ -78,7 +78,7 @@
       "facts": [
         {
           "label": "requests",
-          "value": 1633
+          "value": 1488
         },
         {
           "label": "retried",
@@ -108,7 +108,7 @@
       "facts": [
         {
           "label": "all pods on the new model in",
-          "value": 1.4,
+          "value": 1.9,
           "unit": "s"
         },
         {
@@ -136,7 +136,6 @@
       "facts": [
         {
           "label": "Falco alert after the shell starts",
-          "prefix": "< ",
           "value": 1,
           "unit": "ms"
         },
