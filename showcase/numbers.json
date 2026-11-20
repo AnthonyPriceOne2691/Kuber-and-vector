@@ -51,7 +51,7 @@
       "facts": [
         {
           "label": "requests",
-          "value": 3497
+          "value": 3544
         },
         {
           "label": "retried",
@@ -59,12 +59,12 @@
         },
         {
           "label": "cluster marked the machine dead after",
-          "value": 18,
+          "value": 27,
           "unit": "s"
         },
         {
           "label": "search moved to live machines after",
-          "value": 48,
+          "value": 58,
           "unit": "s"
         }
       ]

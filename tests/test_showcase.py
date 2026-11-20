@@ -222,7 +222,7 @@ class NumbersTest(unittest.TestCase):
             return [(f["prefix"], f["value"], f["unit"]) for f in self.tiles[tid]["facts"]]
         t = self.tiles["one-machine-off"]
         self.assertEqual((t["state"], t["value"]), ("measured", "0"))
-        self.assertEqual(facts("one-machine-off"), [("", "3,497", ""), ("", "1", ""), ("", "18", "s"), ("", "48", "s")])
+        self.assertEqual(facts("one-machine-off"), [("", "3,544", ""), ("", "1", ""), ("", "27", "s"), ("", "58", "s")])
         self.assertEqual((self.tiles["two-machines-off"]["value"], facts("two-machines-off")), ("0", [("", "1,488", ""), ("", "2", "")]))
         self.assertEqual((self.tiles["writes-during-failure"]["value"], facts("writes-during-failure")),
                          ("0", [("", "1,489", "")]))
