@@ -121,6 +121,7 @@ Prometheus и Grafana на machine-4, node_exporter на всех четырёх
 - `search_stage_seconds{stage="embed|qdrant|generate"}`, гистограмма.
 - `search_qdrant_retries_total`, повторы сверх первой попытки.
 - `search_answer_total{result="answered|refused|unsupported|error"}`.
+- `search_route_total{result="routed|not_in_base|plain"}`: выбор договора (app/routing.py); not_in_base это отказ гейта «этого договора в базе нет», plain это поиск по всей коллекции (вопрос без «;» или нет коллекции документов).
 - `GET /metrics` на 8080; через 443 наружу не выходит.
 
 Добавка (развилка 4): метка `pod` со значением `POD_NAME` на всех `search_*`. После переезда пода на машине их два, и NodePort отдаёт `/metrics` то одного, то другого; без метки счётчики двух подов смешаются в одну серию, и `rate()` нарисует ложные всплески. Запросы дашборда суммируют по машине, метка им не мешает.

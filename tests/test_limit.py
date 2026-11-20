@@ -192,7 +192,7 @@ class SyntheticPointsTest(unittest.TestCase):
                 f.write(KEY)
             with mock.patch.multiple(api, QDRANT_URL=qdrant.url, QDRANT_LOCAL_URL="", OLLAMA_URL=ollama.url,
                                      KEY_FILE=key, COLLECTION="synth_rf2", SEARCH_MODE="dense"):
-                hits, timing, _ = api._retrieve("What is the governing law?", 5)
+                hits, timing, _, _ = api._retrieve("What is the governing law?", 5)
         self.assertEqual(hits[0]["file"], "synth/0000007")
         self.assertEqual((hits[0]["span"], hits[0]["text"], hits[0]["document"]), ([0, 0], "", "synthetic"))
         self.assertEqual(set(timing), {"embed", "search"})

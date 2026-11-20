@@ -19,6 +19,7 @@ DEFINITIONS = {
     "search_stage_seconds": ("histogram", "Время шага: embed, qdrant, generate"),
     "search_qdrant_retries_total": ("counter", "Повторы к Qdrant сверх первой попытки"),
     "search_answer_total": ("counter", "Исходы /answer: answered, refused, unsupported, error"),
+    "search_route_total": ("counter", "Выбор договора: routed, not_in_base (гейт), plain (поиск по всей коллекции)"),
 }
 
 

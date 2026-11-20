@@ -17,7 +17,9 @@
 #   LOAD_OPTS="--quantization int8 --on-disk" для замера предела (см. eval/qdrant_load.py),
 #   LOAD_OPTS="--limit 1000" только первые 1000 кусков
 #   REGISTER_AS=bge-m3 подписать набор в реестре не той моделью: только для подложенной ошибки
-#   (deploy/scenes/model-switch.sh)
+#   (deploy/scenes/model-switch.sh); коллекцию договоров такому набору не грузим
+# Рядом с каждой коллекцией кусков ложится коллекция договоров <имя>_docs для выбора договора и гейта
+# (app/routing.py), если на Маке есть <SRC>_docs (deploy/qdrant/docs.py build). DOCS=0 не грузит её.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -27,6 +29,7 @@ SRC="${SRC:-cache/stage1/naive500_title}"; case "$SRC" in /*) ;; *) SRC="$ROOT/$
 SETS="${SETS:-contracts_rf2:6:2 contracts_rf3:3:3}"  # имя:шардов:копий
 LOAD_OPTS="${LOAD_OPTS:-}"
 REGISTER_AS="${REGISTER_AS:-}"
+DOCS="${DOCS:-1}"; [ -z "$REGISTER_AS" ] || DOCS=0
 REMOTE=/home/ops.guest/load
 [ -f "$SRC/points.jsonl" ] || { echo "нет $SRC: сначала python3 -I eval/prepare.py"; exit 1; }
 # запись реестра считается до загрузки: набор без meta.json или с битыми файлами не грузим вовсе
@@ -45,6 +48,12 @@ limactl copy "$HERE/placement.py" "$VM:$REMOTE/placement.py"
 limactl copy "$HERE/registry.py" "$VM:$REMOTE/registry.py"
 limactl copy "$T/entry.json" "$VM:$REMOTE/entry.json"
 limactl copy -r "$SRC" "$VM:$REMOTE/data"
+if [ "$DOCS" = 1 ] && [ -f "${SRC}_docs/points.jsonl" ]; then
+  limactl copy "$HERE/docs.py" "$VM:$REMOTE/docs.py"
+  limactl copy -r "${SRC}_docs" "$VM:$REMOTE/docs"
+elif [ "$DOCS" = 1 ]; then
+  echo "коллекции договоров не будет: нет ${SRC}_docs (deploy/qdrant/docs.py build --src $SRC)"
+fi
 
 limactl shell --workdir "$REMOTE" "$VM" sudo bash -s -- "$REMOTE" "$SETS" "$LOAD_OPTS" "$DIM" <<'EOS'
 set -euo pipefail
@@ -66,6 +75,9 @@ for set in $SETS; do
   python3 -I -B qdrant_load.py --url http://127.0.0.1:16333 --key-file "$K/rw" --dir data --collection "$name" \
     --dim "$DIM" --shards "$shards" --replicas "$replicas" $LOAD_OPTS
   python3 -I -B registry.py --url http://127.0.0.1:16333 --key-file "$K/rw" register --entry entry.json --collection "$name"
+  if [ -d docs ]; then
+    python3 -I -B docs.py load --url http://127.0.0.1:16333 --key-file "$K/rw" --dir docs --collection "$name"
+  fi
   names="$names $name"
 done
 # карта шардов: каждого пира спрашиваем через свой туннель

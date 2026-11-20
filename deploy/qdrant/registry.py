@@ -180,8 +180,11 @@ def drop(q: Qdrant, collection: str) -> None:
     e = q.entry(collection)
     if not (e and e.get("planted")):
         raise Failed(f"{collection} is not a planted collection: drop removes only those, delete others by hand")
-    if collection in q.collections():
+    names = q.collections()
+    if collection in names:
         q.call("DELETE", f"/collections/{collection}")
+    if collection + "_docs" in names:  # коллекция договоров для выбора договора (deploy/qdrant/docs.py)
+        q.call("DELETE", f"/collections/{collection}_docs")
     q.call("POST", f"/collections/{REGISTRY}/points/delete?wait=true", {"points": [registry_id(collection)]})
     print(f"dropped {collection} and its registry entry")
 

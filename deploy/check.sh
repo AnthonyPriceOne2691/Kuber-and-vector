@@ -95,6 +95,22 @@ r = json.loads(sys.argv[1]); c = r.get("model_check") or {}
 sys.exit(0 if c.get("status") == "verified" and c.get("target") == r.get("collection") else 1)' "$out"
 }
 check "поиск отвечает проверенной парой «коллекция, модель» за алиасом contracts" pair_verified
+# Выбор договора (app/routing.py): вопрос с «;» сервис делит, ссылка выбирает договор, куски ищутся
+# внутри него. Договор, которого в базе нет, отклоняет гейт без поиска кусков. Вопросы проверены
+# без стенда: Fiverr из мини проходит гейт (0,655 при пороге 0,586), выдуманная аренда нет (0,452).
+routed() {  # $1 вопрос, $2 условие на Python над ответом r и маршрутом route
+  local out
+  out="$(curl -sf --cacert "$CA" -H @"$KEYH" -G "https://$ENTRY/search" --data-urlencode "q=$1" -d k=3)" || return 1
+  $PY -I -c "import json, sys
+r = json.loads(sys.argv[1]); route = r.get('route') or {}
+sys.exit(0 if ($2) else 1)" "$out"
+}
+Q_IN="Consider \"Fiverr\"'s privacy policy; who can see which tasks i hire workers for?"
+Q_OUT="Consider the Lease Agreement between Nobody Holdings and Nowhere Estates; What is the monthly rent?"
+check "вопрос с «;»: договор выбран верно, куски только из него" routed "$Q_IN" \
+  "(route.get('document') or {}).get('file') == 'privacy_qa/Fiverr.txt' and r['results'] and all(h['file'] == 'privacy_qa/Fiverr.txt' for h in r['results'])"
+check "договора нет в базе: отказ гейта, кусков нет" routed "$Q_OUT" \
+  "r.get('not_in_base') is True and r['results'] == [] and route['gate']['passed'] is False"
 check "без УЦ стенда curl отказывается (сертификат не публичный)" not curl -sf "https://$ENTRY/healthz"
 check "POST запрещён (405)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' -X POST 'https://$ENTRY/search') = 405 ]"
 check "чужой путь закрыт (404)" bash -c "[ \$(curl -s -o /dev/null -w '%{http_code}' --cacert '$CA' 'https://$ENTRY/docs') = 404 ]"

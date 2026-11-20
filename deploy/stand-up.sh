@@ -107,12 +107,17 @@ step "Qdrant" "Qdrant, three peers, one per machine"
 "$HERE/qdrant/install.sh" machine-1
 
 step "данные" "data, contract chunks into Qdrant, RF2 and RF3 collections, second embedding model"
+# коллекция договоров для выбора договора и гейта (app/routing.py): векторы документов на Маке,
+# названия векторизует Ollama с кэшем; готовая папка не пересчитывается
+docs_for() { [ -f "$ROOT/$1_docs/points.jsonl" ] || "$PY" -I -B "$HERE/qdrant/docs.py" build --src "$ROOT/$1"; }
+docs_for cache/stage1/naive500_title
 "$HERE/qdrant/load.sh" machine-1
 # Вторая модель для сцены смены модели (deploy/scenes/model-switch.sh): те же куски, векторы
 # snowflake-arctic-embed2 (python3 -I eval/prepare.py --model snowflake-arctic-embed2 --strategies
 # naive500_title --sparse no --out cache/stage1_arctic). load.sh пишет каждую коллекцию в реестр сам.
 # Без подготовленного набора шаг пропускается, поиск работает на bge-m3 как раньше.
 if [ -f "$ROOT/cache/stage1_arctic/naive500_title/points.jsonl" ]; then
+  docs_for cache/stage1_arctic/naive500_title
   SRC=cache/stage1_arctic/naive500_title SETS="contracts_rf2_arctic:6:2" "$HERE/qdrant/load.sh" machine-1
 fi
 # Поиск ходит по алиасу contracts (SEARCH_ALIAS в deploy/search/k8s.yaml): ставим его до сервиса

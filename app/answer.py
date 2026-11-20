@@ -116,11 +116,19 @@ def quote_in(quote: str, text: str) -> bool:
     return True
 
 
+def _russian(question: str) -> bool:
+    low = question.lower()
+    return len(re.findall(r"[а-яё]", low)) > len(re.findall(r"[a-z]", low))
+
+
 def refusal(question: str) -> str:
     """«В документах этого нет» на языке вопроса."""
-    low = question.lower()
-    cyr, lat = len(re.findall(r"[а-яё]", low)), len(re.findall(r"[a-z]", low))
-    return "В документах этого нет." if cyr > lat else "The documents do not contain this."
+    return "В документах этого нет." if _russian(question) else "The documents do not contain this."
+
+
+def not_in_base(question: str) -> str:
+    """Отказ гейта (app/routing.py): договора из вопроса в базе нет, модель не вызывалась."""
+    return "Этого договора нет в базе." if _russian(question) else "This contract is not in the database."
 
 
 def check(reply: dict | None, hits: list[dict], question: str) -> dict:

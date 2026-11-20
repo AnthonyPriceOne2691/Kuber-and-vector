@@ -16,7 +16,7 @@ OUT="$ROOT/runs/images"
 W=/home/ops.guest/build-search
 # Модули сервиса в образе: api.py и всё, что он берёт из app. Список сверяет с импортами
 # tests/test_search_build.py: 19.11 answer.py и metrics.py в образ не попали, поды падали на импорте.
-APP_FILES="__init__.py api.py answer.py binding.py bm25.py embed_models.py metrics.py"
+APP_FILES="__init__.py api.py answer.py binding.py bm25.py embed_models.py metrics.py routing.py"
 
 limactl shell "$VM" sudo rm -rf "$W"
 limactl shell "$VM" mkdir -p "$W/app"

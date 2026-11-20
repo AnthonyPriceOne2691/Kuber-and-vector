@@ -179,7 +179,7 @@ class EndpointsTest(StandTest):
 
     def test_validation(self):
         for params in ({"q": "ab"}, {"q": "x" * 501}, {"q": "governing law", "k": 0},
-                       {"q": "governing law", "k": 21}, {}):
+                       {"q": "governing law", "k": 65}, {}):
             self.assertEqual(self.client.get("/search", params=params).status_code, 422, params)
 
     def test_embedder_down(self):

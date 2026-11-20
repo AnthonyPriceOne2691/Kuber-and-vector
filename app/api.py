@@ -22,6 +22,11 @@
 коллекции, а не подпись. Не сошлось — отказ: отвечаем прежней парой, отказ виден в /readyz и в поле
 model_check ответа и пишется в журнал (app/binding.py). Запрос берёт пару один раз и ищет по имени
 настоящей коллекции, а не алиаса: модель вопроса и коллекция всегда из одной пары.
+
+Выбор договора (app/routing.py). Вопрос с «;» делится на ссылку на договор и сам вопрос. Ссылка
+выбирает договор по коллекции документов <коллекция>_docs, куски ищутся внутри него. Гейт: если ссылка
+не похожа ни на один договор базы, ответ «этого договора в базе нет» без поиска кусков и без модели.
+Нет коллекции документов или вопрос без «;» — прежний поиск по всей коллекции. ROUTE=0 выключает выбор.
 """
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ from app import binding
 from app import bm25
 from app import embed_models
 from app import metrics
+from app import routing
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant.qdrant.svc.cluster.local:6333").rstrip("/")
 QDRANT_LOCAL_URL = os.environ.get("QDRANT_LOCAL_URL", "").rstrip("/")  # свой пир; пусто значит не пробовать
@@ -70,6 +76,14 @@ QDRANT_ATTEMPTS = int(os.environ.get("QDRANT_ATTEMPTS", "4"))
 NODE = os.environ.get("NODE_NAME", "")
 POD = os.environ.get("POD_NAME", "")
 PAYLOAD = ["title", "section", "file", "start", "end", "text"]
+# выбор договора: параметры подобраны на половине A мини (eval/results/routing.md)
+ROUTE = os.environ.get("ROUTE", "1") != "0"
+ROUTE_DOCS = int(os.environ.get("ROUTE_DOCS", "5"))            # сколько договоров маршрута держать в запасе
+ROUTE_MIX = float(os.environ.get("ROUTE_MIX", "0.25"))         # доля всего вопроса в балле куска
+ROUTE_NEIGHBOR = float(os.environ.get("ROUTE_NEIGHBOR", "0.5"))  # μ: вес лучшего соседа куска
+DOCS_RECHECK = float(os.environ.get("DOCS_RECHECK", "30"))     # нет коллекции документов: проверить снова через
+SEARCH_MAX_K = 64  # как у замера LegalBench-RAG (k до 64)
+NOT_IN_BASE = "this contract is not in the database"
 
 app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
 METRICS = metrics.Registry({"pod": POD})
@@ -274,17 +288,120 @@ def _route(attempts: int) -> str:
     return "local" if QDRANT_LOCAL_URL and attempts == 1 else "cluster"
 
 
-def _retrieve(q: str, k: int, pair: binding.Pair | None = None) -> tuple[list[dict], dict, int]:
-    """Вопрос -> (куски с адресами, время по шагам в мс, номер удачной попытки к Qdrant).
-    Модель вопроса и коллекция из одной пары; без пары берётся текущая."""
+def _hit(score: float, p: dict) -> dict:
+    return {
+        "score": round(score, 4),
+        "document": p.get("title"),
+        "section": p.get("section") or None,
+        "file": p["file"],
+        "span": [p["start"], p["end"]],
+        "text": p["text"],
+    }
+
+
+def _search_call(path: str, body: dict) -> tuple[dict, int]:
+    """Поисковый запрос к Qdrant с учётом повторов в метриках. 404 проходит как QdrantError
+    (нет коллекции документов: значит, выбора договора нет), остальные сбои дают Unavailable."""
+    try:
+        result, attempts = _qdrant(path, body)
+    except QdrantError as e:
+        if e.status == 404:
+            raise
+        raise Unavailable("vector database unavailable") from None
+    except Exception:
+        raise Unavailable("vector database unavailable") from None
+    if attempts > 1:
+        METRICS.inc("search_qdrant_retries_total", value=attempts - 1)
+    return result, attempts
+
+
+_DOCS_MISSING: dict[str, float] = {}  # коллекция документов → до какого момента её не спрашивать
+
+
+def _routed(pair: binding.Pair, vectors: list[list[float]], parts: tuple[str, str],
+            k: int) -> tuple[list[dict], dict, int] | None:
+    """Поиск с выбором договора: (куски, маршрут, попытка). None, если коллекции документов нет."""
+    full, ref, ask = (routing.unit(v) for v in vectors)
+    docs = routing.docs_collection(pair.collection)
+    if _DOCS_MISSING.get(docs, 0.0) > time.monotonic():
+        return None
+    threshold = routing.gate_min(pair.model)
+    searches = [{"query": ref, "using": "route", "limit": ROUTE_DOCS, "with_payload": ["file", "title", "chunks"]}]
+    if threshold is not None:
+        searches.append({"query": ref, "using": "gate", "limit": 1, "with_payload": ["file", "title"]})
+    try:
+        res, attempts = _search_call(f"/collections/{docs}/points/query/batch", {"searches": searches})
+    except QdrantError:
+        _DOCS_MISSING[docs] = time.monotonic() + DOCS_RECHECK
+        log("route_off", collection=pair.collection, reason=f"collection {docs} not found")
+        return None
+    found = res["result"][0]["points"]
+    route: dict = {"used": True, "reference": parts[0], "question": parts[1], "document": None, "gate": None}
+    if threshold is not None:
+        g = res["result"][1]["points"]
+        score = g[0]["score"] if g else 0.0
+        route["gate"] = {"score": round(score, 4), "threshold": threshold, "passed": score >= threshold,
+                         "closest": (g[0].get("payload") or {}).get("title") if g else None}
+        if score < threshold:  # этого договора в базе нет: куски не ищем
+            return [], route, attempts
+    if not found:
+        return None
+    top = found[0]
+    route["document"] = {"file": top["payload"]["file"], "title": top["payload"].get("title"),
+                         "score": round(top["score"], 4)}
+    query = routing.mix(full, ask, ROUTE_MIX)
+    chosen: list[tuple[float, object]] = []
+    for d in found:  # договор за договором, пока кусков меньше k
+        body = {"query": query, "using": "dense", "limit": int(d["payload"].get("chunks") or 2000),
+                "with_payload": ["start"], "params": {"exact": True},
+                "filter": {"must": [{"key": "file", "match": {"value": d["payload"]["file"]}}]}}
+        try:
+            res, a = _search_call(f"/collections/{pair.collection}/points/query", body)
+        except QdrantError:
+            raise Unavailable("vector database unavailable") from None
+        attempts = max(attempts, a)
+        chosen += routing.rank_in_doc(res["result"]["points"], ROUTE_NEIGHBOR)[:k - len(chosen)]
+        if len(chosen) >= k:
+            break
+    if not chosen:
+        return [], route, attempts
+    try:
+        res, a = _search_call(f"/collections/{pair.collection}/points",
+                              {"ids": [i for _, i in chosen], "with_payload": PAYLOAD, "with_vector": False})
+    except QdrantError:
+        raise Unavailable("vector database unavailable") from None
+    attempts = max(attempts, a)
+    by_id = {p["id"]: p.get("payload") or {} for p in res["result"]}
+    return [_hit(s, by_id[i]) for s, i in chosen if i in by_id], route, attempts
+
+
+def _refused_by_gate(route: dict | None) -> bool:
+    return bool(route and route.get("gate") and not route["gate"]["passed"])
+
+
+def _retrieve(q: str, k: int, pair: binding.Pair | None = None) -> tuple[list[dict], dict, int, dict | None]:
+    """Вопрос -> (куски с адресами, время по шагам в мс, номер удачной попытки к Qdrant, маршрут).
+    Модель вопроса и коллекция из одной пары; без пары берётся текущая. Маршрут None: вопрос без «;»,
+    выбор договора выключен или коллекции документов нет; тогда поиск по всей коллекции."""
     pair = pair or _serving()[0]
+    parts = routing.split_question(q) if ROUTE and SEARCH_MODE == "dense" else None
+    texts = [q, *parts] if parts else [q]
     t0 = time.perf_counter()
     try:
-        vector = _embed(pair.model, [embed_models.query_text(pair.model, q)])[0]
+        vectors = _embed(pair.model, [embed_models.query_text(pair.model, t) for t in texts])
     except Exception:
         raise Unavailable("embedder unavailable")
     t1 = time.perf_counter()
     METRICS.observe("search_stage_seconds", {"stage": "embed"}, t1 - t0)
+    if parts:
+        routed = _routed(pair, vectors, parts, k)
+        if routed is not None:
+            hits, route, attempts = routed
+            t2 = time.perf_counter()
+            METRICS.observe("search_stage_seconds", {"stage": "qdrant"}, t2 - t1)
+            METRICS.inc("search_route_total", {"result": "not_in_base" if _refused_by_gate(route) else "routed"})
+            return hits, {"embed": _ms(t1 - t0), "search": _ms(t2 - t1)}, attempts, route
+    vector = vectors[0]
     if SEARCH_MODE == "hybrid":
         body = {"prefetch": [{"query": vector, "using": "dense", "limit": PREFETCH},
                              {"query": bm25.query_sparse(q), "using": "bm25", "limit": PREFETCH}],
@@ -300,15 +417,10 @@ def _retrieve(q: str, k: int, pair: binding.Pair | None = None) -> tuple[list[di
     METRICS.observe("search_stage_seconds", {"stage": "qdrant"}, t2 - t1)
     if attempts > 1:
         METRICS.inc("search_qdrant_retries_total", value=attempts - 1)
-    hits = [{
-        "score": round(h["score"], 4),
-        "document": h["payload"].get("title"),
-        "section": h["payload"].get("section") or None,
-        "file": h["payload"]["file"],
-        "span": [h["payload"]["start"], h["payload"]["end"]],
-        "text": h["payload"]["text"],
-    } for h in points]
-    return hits, {"embed": _ms(t1 - t0), "search": _ms(t2 - t1)}, attempts
+    if ROUTE:
+        METRICS.inc("search_route_total", {"result": "plain"})
+    hits = [_hit(h["score"], h["payload"]) for h in points]
+    return hits, {"embed": _ms(t1 - t0), "search": _ms(t2 - t1)}, attempts, None
 
 
 def _error(message: str, status: int = 503) -> JSONResponse:
@@ -316,10 +428,10 @@ def _error(message: str, status: int = 503) -> JSONResponse:
 
 
 @app.get("/search")
-def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1, le=20)):
+def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1, le=SEARCH_MAX_K)):
     pair, check = _serving()
     try:
-        hits, timing, attempts = _retrieve(q, k, pair)
+        hits, timing, attempts, route = _retrieve(q, k, pair)
     except Unavailable as e:
         return _error(str(e))
     out = {
@@ -330,6 +442,10 @@ def search(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
         "served_by": _served_by(),
         "results": hits,
     }
+    if route is not None:
+        out["route"] = route
+        if _refused_by_gate(route):
+            out.update(not_in_base=True, message=NOT_IN_BASE)
     if check is not None:
         out["model_check"] = check
     return out
@@ -340,10 +456,11 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
     """Ответ своими словами по найденным кускам, со ссылками и проверенными цитатами."""
     pair, check = _serving()
     try:
-        hits, timing, attempts = _retrieve(q, k, pair)
+        hits, timing, attempts, route = _retrieve(q, k, pair)
     except Unavailable as e:
         METRICS.inc("search_answer_total", {"result": "error"})
         return _error(str(e))
+    gated = _refused_by_gate(route)
     tokens = {"prompt": None, "output": None}
     if hits:
         t0 = time.perf_counter()
@@ -362,8 +479,9 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
         timing["generate"] = _ms(time.perf_counter() - t0)
         tokens = {"prompt": reply.get("prompt_eval_count"), "output": reply.get("eval_count")}
         checked = answering.check(answering.parse((reply.get("message") or {}).get("content", "")), hits, q)
-    else:  # кусков нет: модели нечего читать
-        checked = {"status": "refused", "answer": answering.refusal(q), "citations": []}
+    else:  # кусков нет или договора нет в базе: модели нечего читать
+        checked = {"status": "refused", "citations": [],
+                   "answer": answering.not_in_base(q) if gated else answering.refusal(q)}
     if checked["status"] == "invalid":
         METRICS.inc("search_answer_total", {"result": "error"})
         return _error("model reply is not in the expected format", 502)
@@ -379,6 +497,10 @@ def answer(q: str = Query(min_length=3, max_length=500), k: int = Query(5, ge=1,
         "qdrant_route": _route(attempts),
         "served_by": _served_by(),
     }
+    if route is not None:
+        out["route"] = route
+        if gated:
+            out["not_in_base"] = True
     if check is not None:
         out["model_check"] = check
     return out

@@ -228,12 +228,31 @@ class MemoryQdrant:
                 col["points"].pop(i, None)
             return 200, {"result": {"status": "completed"}}
         if rest == "points/query" and method == "POST":
-            using, vec = req.get("using", "dense"), req["query"]
-            scored = sorted(((_cos(vec, p["vector"][using]), i, p) for i, p in col["points"].items()
-                             if using in p["vector"]), key=lambda x: -x[0])[:req.get("limit", 10)]
-            return 200, {"result": {"points": [{"id": i, "score": s, "payload": _pick(p["payload"], req.get("with_payload"))}
-                                               for s, i, p in scored]}}
+            return 200, {"result": {"points": self._query(col, req)}}
+        if rest == "points/query/batch" and method == "POST":
+            return 200, {"result": [{"points": self._query(col, s)} for s in req["searches"]]}
+        if rest == "index" and method == "PUT":
+            col.setdefault("indexes", []).append(req)
+            return 200, {"result": {"status": "completed"}}
         return 404, {"status": {"error": "not found"}}
+
+    @staticmethod
+    def _query(col: dict, req: dict) -> list[dict]:
+        """Поиск по именованному вектору: косинус или Dot (как в конфиге коллекции), фильтр must по
+        совпадению значения поля, limit, with_payload."""
+        using, vec = req.get("using", "dense"), req["query"]
+        vectors = (col["config"].get("vectors") or {})
+        dot = isinstance(vectors.get(using), dict) and vectors[using].get("distance") == "Dot"
+        must = ((req.get("filter") or {}).get("must")) or []
+
+        def ok(p: dict) -> bool:
+            return all(p["payload"].get(c["key"]) == c["match"]["value"] for c in must)
+
+        def score(v: list[float]) -> float:
+            return sum(x * y for x, y in zip(vec, v)) if dot else _cos(vec, v)
+        scored = sorted(((score(p["vector"][using]), i, p) for i, p in col["points"].items()
+                         if using in p["vector"] and ok(p)), key=lambda x: -x[0])[:req.get("limit", 10)]
+        return [{"id": i, "score": s, "payload": _pick(p["payload"], req.get("with_payload"))} for s, i, p in scored]
 
     def _aliases(self, actions: list[dict]):
         self.alias_requests.append(actions)
