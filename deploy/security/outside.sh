@@ -52,7 +52,11 @@ case "${1:-up}" in
     echo "$VM: $(limactl shell "$VM" trivy --version 2>/dev/null | head -1), database $(limactl shell "$VM" cat /home/ops.guest/trivy-cache/db/metadata.json)"
     ;;
   down)
-    if exists; then limactl delete --force "$VM" >/dev/null; echo "$VM deleted"; else echo "no $VM"; fi
+    # журнал limactl (десяток строк INFO) печатается только при ошибке: иначе он в конце вывода скана (ролик)
+    if exists; then
+      if ! log=$(limactl delete --force "$VM" 2>&1); then echo "$log"; exit 1; fi
+      echo "$VM deleted"
+    else echo "no $VM"; fi
     ;;
   *) echo "mode: up, trivy or down"; exit 1 ;;
 esac
