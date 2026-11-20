@@ -1,7 +1,8 @@
 """Витрина для ролика (showcase/): прокси во вход стенда против подставного входа, эталон
 LegalBench-RAG на маленьких примерах, numbers.json (пропуски -> pending), защита от вставки HTML,
-заглушка входа. Стенда и сети нет: вход — FakeServer на 127.0.0.1, сертификаты TLS — одноразовые
-из openssl по рецепту deploy/observer/install.sh (нет openssl — эти тесты пропускаются).
+заглушка входа с выбором договора и гейтом (сверка с сервисом на одном стенде в памяти). Стенда и
+сети нет: вход — FakeServer на 127.0.0.1, сертификаты TLS — одноразовые из openssl по рецепту
+deploy/observer/install.sh (нет openssl — эти тесты пропускаются).
 
     python3 -I -B -m unittest discover -s tests -t .
 """
@@ -23,12 +24,15 @@ import urllib.parse
 import urllib.request
 from array import array
 from html.parser import HTMLParser
+from unittest import mock
 
+from app import routing
 from eval import legalbench as lb
 from showcase import numbers as board
 from showcase import server
 from showcase import stub
 from showcase.truth import Benchmark, merge, norm_query, segments
+from tests import test_routing as tr  # стенд в памяти и подставная Ollama тестов выбора договора в сервисе
 from tests.fakes import FakeServer, closed_port_url
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -475,6 +479,66 @@ class AnswerTest(ShowcaseCase):
         self.assertEqual(urllib.parse.urlsplit(self.fake.paths()[0]).path, "/answer")
 
 
+# --- выбор договора и гейт сервиса: поле route и отказ not_in_base -------------------------------------
+Q_OUT = "Consider the Lease Agreement between Nobody Holdings and Nowhere Estates; What is the monthly rent?"
+ROUTE_A = {"used": True, "reference": "Consider the License Agreement of Acme", "question": "When does the term end?",
+           "document": {"file": FILE_A, "title": "Acme License", "score": 0.7162},
+           "gate": {"score": 0.6271, "threshold": 0.586, "passed": True, "closest": "Acme License"}}
+ROUTE_OUT = {"used": True, "reference": "Consider the Lease Agreement between Nobody Holdings and Nowhere Estates",
+             "question": "What is the monthly rent?", "document": None,
+             "gate": {"score": 0.4516, "threshold": 0.586, "passed": False, "closest": "Beta Notes"}}
+
+
+class RouteProxyTest(ShowcaseCase):
+    """Сервер витрины отдаёт тело сервиса как есть: поле route и отказ гейта доходят до страницы."""
+
+    def entry(self, endpoint: str, doc: dict) -> None:
+        def handler(method, path, headers, body):
+            if headers.get("X-API-Key") != KEY:
+                return 401, {"error": "нужен ключ API"}
+            if urllib.parse.urlsplit(path).path != "/" + endpoint:
+                return 404, {"error": "not found"}
+            return 200, doc
+        self.fake.handler = handler
+
+    def search_doc(self, q: str, results: list, **extra) -> dict:
+        return {"query": q, "model": "bge-m3", "collection": "contracts_rf2", "mode": "dense",
+                "timing_ms": {"embed": 11.2, "search": 2.4}, "qdrant_attempts": 1, "qdrant_route": "local",
+                "served_by": {"node": "machine-2", "pod": "search-abc"}, "results": results, **extra}
+
+    def test_chosen_contract_passes_with_annotation(self):
+        self.entry("search", self.search_doc(Q_A, [hit(500, 1000), hit(0, 500)], route=ROUTE_A))
+        code, d = self.app.ask("search", Q_A, "2")
+        self.assertEqual(code, 200, d)
+        self.assertEqual(d["result"]["route"], ROUTE_A)
+        self.assertNotIn("not_in_base", d["result"])
+        self.assertEqual([a["match"] for a in d["annotations"]], [True, True])  # разметка как раньше
+
+    def test_not_in_base_passes_without_passages(self):
+        self.entry("search", self.search_doc(Q_OUT, [], route=ROUTE_OUT, not_in_base=True,
+                                             message="this contract is not in the database"))
+        code, d = self.app.ask("search", Q_OUT, "5")
+        self.assertEqual(code, 200, d)
+        r = d["result"]
+        self.assertEqual((r["not_in_base"], r["message"], r["results"]), (True, "this contract is not in the database", []))
+        self.assertEqual(r["route"], ROUTE_OUT)
+        self.assertEqual((d["annotations"], d["truth"], d["coverage"]), ([], None, None))
+        body = json.loads(self.http().get("/api/search?" + urllib.parse.urlencode({"q": Q_OUT}))[2])
+        self.assertEqual(body["result"]["route"]["gate"], ROUTE_OUT["gate"])  # и через HTTP сервера витрины
+
+    def test_answer_refusal_passes(self):
+        doc = {"query": Q_OUT, "model": "qwen3:8b", "embed_model": "bge-m3", "collection": "contracts_rf2",
+               "status": "refused", "citations": [], "answer": "This contract is not in the database.",
+               "sources": [], "timing_ms": {"embed": 10.0, "search": 1.2}, "tokens": {"prompt": None, "output": None},
+               "qdrant_attempts": 1, "qdrant_route": "local", "served_by": {"node": "machine-1", "pod": "search-x"},
+               "route": ROUTE_OUT, "not_in_base": True}
+        self.entry("answer", doc)
+        code, d = self.app.ask("answer", Q_OUT, "5")
+        self.assertEqual(code, 200, d)
+        self.assertEqual(d["result"], doc)
+        self.assertEqual(d["annotations"], [])
+
+
 class HttpLayerTest(ShowcaseCase):
     hits = [hit(500, 1000, text=None), {**hit(0, 500), "text": DOC_A[:450] + "<img src=x onerror=alert(1)>"[:50]}]
 
@@ -596,26 +660,62 @@ class StaticTextTest(unittest.TestCase):
             self.assertFalse(re.search("[а-яё]", script, re.I), f"{name}: русский в строках скрипта")
 
 
+def load_presets() -> list[dict]:
+    with open(os.path.join(SHOWCASE, "presets.json"), encoding="utf-8") as f:
+        return json.load(f)["presets"]
+
+
 class PresetsTest(unittest.TestCase):
     def test_presets_shape(self):
-        with open(os.path.join(SHOWCASE, "presets.json"), encoding="utf-8") as f:
-            presets = json.load(f)["presets"]
+        presets = load_presets()
         self.assertTrue(5 <= len(presets) <= 8)
         self.assertEqual(len({p["id"] for p in presets}), len(presets))
-        self.assertEqual({p["dataset"] for p in presets}, set(lb.DATASETS))  # все четыре набора
+        bench = [p for p in presets if p.get("in_benchmark") is not False]
+        self.assertEqual({p["dataset"] for p in bench}, set(lb.DATASETS))  # все четыре набора
         for p in presets:
             self.assertTrue(p["label"] and p["query"].startswith("Consider"), p["id"])
             self.assertTrue(1 <= p["k"] <= server.LIMITS["search_k_max"])
+
+    def test_preset_with_contract_outside_the_base(self):
+        presets = load_presets()
+        self.assertEqual([p["id"] for p in presets[:7]],  # прежние семь на своих местах
+                         ["supply-term", "merger-knowledge", "nda-archival-copy", "privacy-delete",
+                          "merger-specific-performance", "nda-survival", "service-term"])
+        outside = [p for p in presets if p.get("in_benchmark") is False]
+        self.assertEqual([p["id"] for p in outside], ["lease-not-in-base"])
+        p = outside[0]
+        self.assertIs(p, presets[-1])  # клавиша 8 и ?preset=8
+        self.assertEqual(p["query"], "Consider the Lease Agreement between Nobody Holdings and Nowhere Estates; "
+                                     "What is the monthly rent?")
+        self.assertIn("not in the base", p["label"])
+        self.assertEqual(routing.split_question(p["query"]),
+                         ("Consider the Lease Agreement between Nobody Holdings and Nowhere Estates",
+                          "What is the monthly rent?"))  # ссылка на договор идёт в гейт
+
+    def test_server_does_not_expect_truth_for_it(self):
+        for data in (None, self._small_data()):  # с эталоном и без него
+            app = server.Showcase(server.Entry(url="http://127.0.0.1:1"), Benchmark(data), "",
+                                  os.path.join(SHOWCASE, "presets.json"), log=lambda m: None)
+            got = {p["id"]: (p["in_benchmark"], p["expect_truth"]) for p in app.presets()}
+            self.assertEqual(got.pop("lease-not-in-base"), (False, False))
+            self.assertEqual(set(got.values()), {(None if data is None else False, True)})
+
+    def _small_data(self) -> str:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        make_dataset(tmp.name)
+        return tmp.name
 
     def test_presets_are_mini_questions_with_short_annotation(self):
         data = os.path.join(ROOT, "data", "legalbenchrag")
         bench = Benchmark(data)
         if not bench.available():
             self.skipTest("нет data/legalbenchrag (набор в git не идёт)")
-        with open(os.path.join(SHOWCASE, "presets.json"), encoding="utf-8") as f:
-            presets = json.load(f)["presets"]
-        for p in presets:
+        for p in load_presets():
             t = bench.lookup(p["query"])
+            if p.get("in_benchmark") is False:  # договор не из базы: эталона нет
+                self.assertIsNone(t, p["id"])
+                continue
             self.assertIsNotNone(t, p["id"])
             self.assertTrue(t["in_mini"], p["id"])
             self.assertEqual(t["dataset"], p["dataset"])
@@ -764,6 +864,186 @@ class StubTest(unittest.TestCase):
         self.assertEqual(d["result"]["served_by"]["node"], "stub")
         bad = server.Showcase(server.Entry(url=e.url, key=("X-API-Key", "wrong")), Benchmark(None), "", "", log=lambda m: None)
         self.assertEqual(bad.ask("search", Q_A, "2")[1]["kind"], "key")
+
+
+# --- заглушка: выбор договора и гейт той же логикой, что сервис -------------------------------------
+QA = f"{tr.REF_A}; {tr.ASK_A}"     # договор Acme есть в базе
+QX = f"{tr.REF_OUT}; {tr.ASK_A}"   # договора Zeta в базе нет
+
+
+def write_stub_cache(root: str, mq, questions: list[str]) -> None:
+    """Кэш замера для заглушки из стенда в памяти тестов сервиса (tests/test_routing.py): те же куски,
+    векторы договоров и вопросов, поэтому заглушка и сервис должны ответить одинаково. Векторы вопросов
+    кладутся только для questions, остальные заглушка берёт у Ollama."""
+    chunks = list(mq.cols["contracts_rf2"]["points"].values())
+    d = os.path.join(root, "naive500_title")
+    os.makedirs(d)
+    with open(os.path.join(d, "points.jsonl"), "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(c["payload"]) + "\n" for c in chunks)
+    with open(os.path.join(d, "vectors.f32"), "wb") as f:
+        array("f", [x for c in chunks for x in c["vector"]["dense"]]).tofile(f)
+    with open(os.path.join(root, "queries.jsonl"), "w", encoding="utf-8") as f:
+        f.writelines(json.dumps({"query": q}) + "\n" for q in questions)
+    with open(os.path.join(root, "query_vectors.f32"), "wb") as f:
+        array("f", [x for q in questions for x in tr.VECTORS[q]]).tofile(f)
+    docs = list(mq.cols["contracts_rf2_docs"]["points"].items())
+    dd = os.path.join(root, "naive500_title_docs")
+    os.makedirs(dd)
+    with open(os.path.join(dd, "meta.json"), "w", encoding="utf-8") as f:
+        json.dump({"model": "bge-m3", "dim": 4, "docs": len(docs), "source": "naive500_title"}, f)
+    with open(os.path.join(dd, "points.jsonl"), "w", encoding="utf-8") as f:
+        f.writelines(json.dumps({"id": i, **p["payload"]}) + "\n" for i, p in docs)
+    for name in ("route", "gate"):
+        with open(os.path.join(dd, f"{name}.f32"), "wb") as f:
+            array("f", [x for _, p in docs for x in p["vector"][name]]).tofile(f)
+
+
+class StubRouteTest(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = tmp.name
+        write_stub_cache(self.root, tr.memory_stand(), [QA, "governing law"])  # QX нет в кэше замера
+        self.index = stub.StubIndex(self.root)
+        self.ollama = FakeServer(tr.ollama_vectors)
+        self.addCleanup(self.ollama.close)
+        env = mock.patch.dict(os.environ, {"GATE_MIN": ""})  # порог как у сервиса, без перекрытия
+        env.start()
+        self.addCleanup(env.stop)
+
+    def entry(self, ollama_url: str | None = None, mode: str = "answered") -> stub.StubEntry:
+        router = stub.open_router(self.index, self.root, ollama_url or self.ollama.url,
+                                  os.path.join(self.root, "embeddings"))
+        e = stub.StubEntry(self.index, KEY, answer_mode=mode, router=router)
+        self.addCleanup(e.close)
+        return e
+
+    def test_contract_chosen_and_searched_inside(self):
+        code, body = self.entry().search(QA, 3)
+        self.assertEqual(code, 200, body)
+        route = body["route"]
+        self.assertEqual((route["used"], route["reference"], route["question"]), (True, tr.REF_A, tr.ASK_A))
+        self.assertEqual((route["document"]["file"], route["document"]["title"]), ("cuad/acme.txt", "Acme License"))
+        self.assertEqual(route["gate"], {"score": 0.9, "threshold": routing.gate_min("bge-m3"), "passed": True,
+                                         "closest": "Acme License"})
+        self.assertEqual(route["gate"]["threshold"], 0.586)
+        self.assertNotIn("not_in_base", body)
+        self.assertEqual({h["file"] for h in body["results"]}, {"cuad/acme.txt"})
+        self.assertEqual([h["span"][0] for h in body["results"][:2]], [1000, 500])  # пункт, а не преамбула
+        self.assertTrue(body["stub"])
+        # весь вопрос из кэша замера, к Ollama одна поездка за ссылкой и самим вопросом
+        self.assertEqual([b["input"] for b in self.ollama.json_bodies()], [[tr.REF_A, tr.ASK_A]])
+
+    def test_next_contract_fills_when_first_is_short(self):
+        code, body = self.entry().search(QA, 5)
+        self.assertEqual([h["file"] for h in body["results"]], ["cuad/acme.txt"] * 4 + ["cuad/beta.txt"])
+
+    def test_contract_not_in_base(self):
+        e = self.entry()
+        code, body = e.search(QX, 3)
+        self.assertEqual(code, 200, body)
+        self.assertEqual((body["not_in_base"], body["message"], body["results"]),
+                         (True, "this contract is not in the database", []))
+        self.assertIsNone(body["route"]["document"])
+        self.assertFalse(body["route"]["gate"]["passed"])
+        self.assertLess(body["route"]["gate"]["score"], body["route"]["gate"]["threshold"])
+        code, ans = e.answer(QX, 3)
+        self.assertEqual(code, 200, ans)
+        self.assertEqual((ans["status"], ans["answer"], ans["citations"], ans["sources"], ans["not_in_base"]),
+                         ("refused", "This contract is not in the database.", [], [], True))
+        self.assertNotIn("generate", ans["timing_ms"])  # модель не зовётся
+        self.assertEqual(ans["route"], body["route"])
+        # вопроса нет в кэше замера: три вектора одной поездкой, второй раз всё из кэша, /api/chat ни разу
+        self.assertEqual([b["input"] for b in self.ollama.json_bodies()], [[QX, tr.REF_OUT, tr.ASK_A]])
+        self.assertEqual(self.ollama.paths(), ["/api/embed"])
+
+    def test_gate_refusal_comes_before_model_failures(self):
+        for mode in ("busy", "invalid"):
+            code, ans = self.entry(mode=mode).answer(QX, 3)
+            self.assertEqual((code, ans["status"]), (200, "refused"), mode)  # до модели дело не доходит
+
+    def test_question_without_semicolon_has_no_route(self):
+        code, body = self.entry().search("governing law", 3)
+        self.assertEqual(code, 200, body)
+        self.assertNotIn("route", body)
+        self.assertEqual(len(body["results"]), 3)
+        self.assertEqual(self.ollama.requests, [])  # вектор вопроса из кэша замера
+
+    def test_gate_off_still_chooses_a_contract(self):
+        with mock.patch.dict(os.environ, {"GATE_MIN": "off"}):
+            code, body = self.entry().search(QX, 3)
+        self.assertIsNone(body["route"]["gate"])
+        self.assertTrue(body["results"])
+        self.assertNotIn("not_in_base", body)
+
+    def test_without_ollama_works_as_before(self):
+        e = self.entry(ollama_url=closed_port_url())
+        code, body = e.search(QA, 3)
+        self.assertEqual(code, 200, body)
+        self.assertNotIn("route", body)  # прежний поиск по всем кускам
+        self.assertEqual(len(body["results"]), 3)
+        self.assertEqual(e.search(QX, 3)[0], 503)  # вопроса нет в кэше, посчитать его нечем
+        self.assertEqual(e.answer(QX, 3)[0], 503)
+
+    def test_router_needs_documents_of_the_same_model(self):
+        emb = os.path.join(self.root, "embeddings")
+        with self.assertRaises(OSError):
+            stub.open_router(self.index, self.root, self.ollama.url, emb, strategy="naive500")
+        meta = os.path.join(self.root, "naive500_title_docs", "meta.json")
+        for bad in ({"model": "snowflake-arctic-embed2", "dim": 4}, {"model": "bge-m3", "dim": 8}):
+            with open(meta, "w", encoding="utf-8") as f:
+                json.dump(bad, f)
+            with self.assertRaises(ValueError):
+                stub.open_router(self.index, self.root, self.ollama.url, emb)
+
+    def test_showcase_passes_the_stub_route(self):
+        e = self.entry()
+        e.start()
+        app = server.Showcase(server.Entry(url=e.url, key=("X-API-Key", KEY)), Benchmark(None),
+                              os.path.join(SHOWCASE, "numbers.json"), os.path.join(SHOWCASE, "presets.json"),
+                              stub=True, log=lambda m: None)
+        code, d = app.ask("search", QA, "3")
+        self.assertEqual(code, 200, d)
+        self.assertEqual(d["result"]["route"]["document"]["title"], "Acme License")
+        code, d = app.ask("answer", QX, "3")
+        self.assertEqual(code, 200, d)
+        self.assertTrue(d["stub"] and d["result"]["not_in_base"])
+        self.assertEqual(d["result"]["answer"], "This contract is not in the database.")
+
+    @unittest.skipIf(tr.TestClient is None, "нужны fastapi и httpx")
+    def test_same_answers_as_the_service(self):
+        api = tr.api
+        self.assertEqual((stub.ROUTE_DOCS, stub.ROUTE_MIX, stub.ROUTE_NEIGHBOR, stub.NOT_IN_BASE),
+                         (api.ROUTE_DOCS, api.ROUTE_MIX, api.ROUTE_NEIGHBOR, api.NOT_IN_BASE))
+        qdrant = FakeServer(tr.memory_stand())
+        self.addCleanup(qdrant.close)
+        key_file = os.path.join(self.root, "qdrant-key")
+        with open(key_file, "w") as f:
+            f.write(tr.KEY)
+        p = mock.patch.multiple(api, QDRANT_URL=qdrant.url, OLLAMA_URL=self.ollama.url, KEY_FILE=key_file,
+                                COLLECTION="contracts_rf2", SEARCH_MODE="dense", SEARCH_ALIAS="", ROUTE=True,
+                                QDRANT_LOCAL_URL="", QDRANT_CONNECT_TIMEOUT=0.3, QDRANT_READ_TIMEOUT=0.3,
+                                QDRANT_ATTEMPTS=2, _DOCS_MISSING={})
+        p.start()
+        self.addCleanup(p.stop)
+        client = tr.TestClient(api.app)
+        e = self.entry()
+        for q, k in ((QA, 3), (QA, 5), (QX, 3), ("governing law", 3)):
+            r = client.get("/search", params={"q": q, "k": k})
+            self.assertEqual(r.status_code, 200, r.text)
+            want, (code, got) = r.json(), e.search(q, k)
+            self.assertEqual(code, 200, got)
+            for key in ("not_in_base", "message"):
+                self.assertEqual(got.get(key), want.get(key), (q, key))
+            self.assertEqual(json.dumps(got.get("route"), sort_keys=True), json.dumps(want.get("route"), sort_keys=True), q)
+            self.assertEqual([(h["file"], h["span"], h["text"], h["section"]) for h in got["results"]],
+                             [(h["file"], h["span"], h["text"], h["section"]) for h in want["results"]], (q, k))
+            for a, b in zip(got["results"], want["results"]):
+                self.assertAlmostEqual(a["score"], b["score"], delta=1e-3)
+        want = client.get("/answer", params={"q": QX, "k": 3}).json()
+        got = e.answer(QX, 3)[1]
+        for key in ("status", "answer", "citations", "sources", "not_in_base", "route"):
+            self.assertEqual(got[key], want[key], key)
 
 
 if __name__ == "__main__":
