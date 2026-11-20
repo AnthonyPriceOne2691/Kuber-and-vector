@@ -51,7 +51,7 @@
       "facts": [
         {
           "label": "requests",
-          "value": 3439
+          "value": 3371
         },
         {
           "label": "retried",
@@ -59,12 +59,12 @@
         },
         {
           "label": "cluster marked the machine dead after",
-          "value": 19,
+          "value": 25,
           "unit": "s"
         },
         {
           "label": "search moved to live machines after",
-          "value": 49,
+          "value": 55,
           "unit": "s"
         }
       ]
@@ -78,7 +78,7 @@
       "facts": [
         {
           "label": "requests",
-          "value": 1498
+          "value": 1633
         },
         {
           "label": "retried",
@@ -108,17 +108,17 @@
       "facts": [
         {
           "label": "all pods on the new model in",
-          "value": 0.4,
+          "value": 1.4,
           "unit": "s"
         },
         {
           "label": "rollback in",
-          "value": 0.9,
+          "value": 0.8,
           "unit": "s"
         },
         {
           "label": "requests under load",
-          "value": 4368
+          "value": 2775
         },
         {
           "label": "pods that refused the mislabeled vectors",
