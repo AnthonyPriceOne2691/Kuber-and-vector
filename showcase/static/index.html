@@ -127,6 +127,24 @@ mark.truth { color: var(--ink); background: color-mix(in srgb, var(--good) 27%, 
 .error-card::before { content: "✕"; color: #ff7b7b; font-size: 15px; }
 .error-card small { display: block; font-size: 14px; color: var(--muted); margin-top: 4px; }
 
+/* --- выбранный договор и отказ гейта (поле route ответа сервиса) --- */
+.route { flex: none; display: flex; align-items: baseline; gap: 14px; padding: 11px 18px 11px 22px; overflow: hidden; }
+.route::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
+.route .label { flex: none; }
+.route-doc { font-size: 18px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.route-score { margin-left: auto; flex: none; font: 15px var(--mono); color: var(--ink-2); }
+.refusal { flex: none; padding: 18px 22px 18px 26px; overflow: hidden;
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--hairline)); background: color-mix(in srgb, var(--warning) 9%, var(--surface)); }
+.refusal::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--warning); }
+.refusal-title { font-size: 25px; font-weight: 650; }
+.refusal-title::before { content: "▲"; color: var(--warning); font-size: 16px; margin-right: 12px; vertical-align: 3px; }
+.refusal-sub { display: flex; align-items: baseline; margin-top: 10px; font-size: 17px; color: var(--ink-2); white-space: nowrap; min-width: 0; }
+.refusal-sub > span { flex: none; }
+.refusal-sub > span + span::before { content: "·"; margin: 0 10px; color: var(--muted); }
+.refusal-sub .closest { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; min-width: 0; color: var(--ink); font-weight: 650; }
+.refusal-sub .num { font: 15px var(--mono); }
+.refusal-note { margin-top: 8px; font-size: 15px; color: var(--muted); }
+
 /* --- ответ модели --- */
 .answer { flex: none; padding: 16px 20px 16px; }
 .ans-head { display: flex; align-items: center; gap: 12px; }
@@ -208,7 +226,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     </div>
   </header>
 
-  <main id="scene" data-state="idle" data-tab="search" data-match="none">
+  <main id="scene" data-state="idle" data-tab="search" data-match="none" data-route="none">
     <section class="left">
       <div class="card ask">
         <textarea id="q" rows="2" spellcheck="false" autocomplete="off" placeholder="Ask about a contract"></textarea>
@@ -219,6 +237,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
         <div class="ask-meta" id="ask-meta" data-kind="none"></div>
       </div>
       <div class="body" id="body">
+        <div class="card route" id="route" hidden><span class="label">Contract</span><span class="route-doc" id="route-doc"></span><span class="route-score" id="route-score"></span></div>
         <div class="card answer" id="answer" hidden>
           <div class="ans-head"><span class="label">Answer</span><span class="chip" id="answer-status"><i></i><span></span></span><span class="note" id="answer-model"></span></div>
           <p class="ans-text" id="answer-text"></p>
@@ -260,7 +279,9 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
 // адресом для повторяемой съёмки: ?preset=N (с 1), ?q=…, ?k=…, ?tab=answer, ?autoplay=1 (набрать и
 // искать сразу) или ?autoplay=click (по щелчку в поле), ?typing=0 или мс на знак, ?still (без анимаций).
 // Устойчивые цели для записи: #q, #k, #go, #tab-search, #tab-answer, #scene[data-state=done],
-// #hit-N, #hit-N mark.truth, #hit-N .addr, #truth .snip-text, #request, #quality.
+// #hit-N, #hit-N mark.truth, #hit-N .addr, #truth .snip-text, #request, #quality. Выбор договора
+// (поле route ответа сервиса): #route — выбранный договор над выдачей, #refusal — отказ гейта
+// «договора нет в базе» вместо выдачи; #scene[data-route=contract|not_in_base|none].
 (() => {
   "use strict";
   const $ = (s) => document.querySelector(s);
@@ -339,6 +360,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     setState("idle");
     scene.dataset.match = "none";
     resetSide("Timing and the machine that served the request show here.");
+    hideRoute();
     $("#answer").hidden = true;
     $("#res-label").textContent = tab === "answer" ? "Sources" : "Results";
     $("#res-note").textContent = "";
@@ -373,6 +395,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     setState("loading");
     scene.dataset.match = "none";
     resetSide("Waiting for the reply.");
+    hideRoute();
     $("#answer").hidden = true;
     $("#res-note").textContent = "";
     const waitEl = h("p", "loading", which === "answer" ? "Retrieving sources and writing an answer" : "Searching the contracts");
@@ -404,12 +427,47 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
   function render(d, which) {
     const r = d.result || {}, ann = d.annotations || [];
     const hits = (which === "answer" ? r.sources : r.results) || [];
-    scene.dataset.match = d.truth ? (ann.some((a) => a && a.match) ? "yes" : "no") : "none";
+    const refused = r.not_in_base === true;  // гейт сервиса: договора из вопроса нет в базе
+    scene.dataset.match = d.truth && !refused ? (ann.some((a) => a && a.match) ? "yes" : "no") : "none";
     $("#sim").hidden = !(d.stub || CFG?.stub);
-    if (which === "answer") renderAnswer(r); else $("#answer").hidden = true;
-    renderHits(hits, ann, d, which);
-    renderTruth(d);
+    renderRoute(r.route, refused);
+    $("#answer").hidden = true;
+    if (refused) renderRefusal(r.route, which);
+    else {
+      if (which === "answer") renderAnswer(r);
+      renderHits(hits, ann, d, which);
+    }
+    renderTruth(d, refused);
     renderRequest(d, r, which);
+  }
+
+  // --- выбор договора: какой договор выбрал сервис или почему отказал ------------------------
+  function hideRoute() {
+    $("#route").hidden = true;
+    scene.dataset.route = "none";
+  }
+  function renderRoute(route, refused) {
+    const doc = route && route.document;
+    scene.dataset.route = refused ? "not_in_base" : doc ? "contract" : "none";
+    $("#route").hidden = refused || !doc;
+    if (refused || !doc) return;
+    $("#route-doc").textContent = doc.title || doc.file || "Untitled contract";
+    $("#route-score").textContent = `match ${fmtScore(doc.score)}`;
+  }
+  function renderRefusal(route, which) {
+    const g = (route && route.gate) || {};
+    const card = h("div", "card refusal");
+    card.id = "refusal";
+    card.append(h("div", "refusal-title", "This contract is not in the database"));
+    const sub = h("div", "refusal-sub");
+    if (g.closest) sub.append(h("span", "", "Closest in the base"), h("span", "closest", g.closest));
+    if (typeof g.score === "number") sub.append(h("span", "num", `match ${fmtScore(g.score)}`));
+    if (typeof g.threshold === "number") sub.append(h("span", "num", `threshold ${fmtScore(g.threshold)}`));
+    if (sub.children.length) card.append(sub);
+    if (which === "answer") card.append(h("div", "refusal-note", "The model was not called"));
+    $("#res-label").textContent = which === "answer" ? "Sources" : "Results";
+    $("#res-note").textContent = "";
+    $("#results").replaceChildren(card);
   }
 
   // --- куски ------------------------------------------------------------------------------
@@ -482,9 +540,11 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
   }
 
   // --- разметка юристов -------------------------------------------------------------------
-  function renderTruth(d) {
+  function renderTruth(d, refused) {
     const card = $("#truth"), body = $("#truth-body"), meta = $("#truth-meta");
     meta.textContent = "";
+    card.hidden = refused;  // договора нет в базе: ни разметки, ни покрытия
+    if (refused) { card.dataset.state = "none"; body.replaceChildren(); return; }
     if (!d.truth_available) {
       card.dataset.state = "none";
       body.replaceChildren(h("p", "side-empty", "Annotation data is not on this machine."));
@@ -542,6 +602,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
 
   // Правая колонка без данных этого запроса: старые ответы не остаются рядом с новым вопросом
   function resetSide(requestNote) {
+    $("#truth").hidden = false;
     $("#truth").dataset.state = "idle";
     $("#truth-meta").textContent = "";
     $("#truth-body").replaceChildren(h("p", "side-empty", "The passage marked by lawyers shows here after a benchmark question."));
@@ -559,6 +620,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
       timeout: "The stand may be under load", config: "Start the showcase server with the stand files" }[kind];
     if (hint) body.append(h("small", "", hint));
     card.append(body);
+    hideRoute();
     $("#answer").hidden = true;
     $("#results").replaceChildren(card);
     $("#res-note").textContent = "";

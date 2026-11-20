@@ -225,7 +225,9 @@ class Showcase:
 
     # --- настройки страницы -------------------------------------------------------------------
     def presets(self) -> list[dict]:
-        """showcase/presets.json, читается на каждый запрос: правка видна без перезапуска."""
+        """showcase/presets.json, читается на каждый запрос: правка видна без перезапуска.
+        "in_benchmark": false в пресете — вопрос нарочно не из набора (договор не из базы): эталона нет
+        и не ждём (expect_truth false), при запуске такой пресет не считается пропавшим из набора."""
         try:
             with open(self.presets_path, encoding="utf-8") as f:
                 raw = json.load(f)
@@ -238,10 +240,16 @@ class Showcase:
             k = p.get("k")
             k = k if isinstance(k, int) and not isinstance(k, bool) and 1 <= k <= LIMITS["search_k_max"] \
                 else LIMITS["k_default"]
-            truth = self.bench.lookup(p["query"]) if self.bench.available() else None
+            outside = p.get("in_benchmark") is False
+            if outside:
+                in_benchmark = False
+            elif self.bench.available():
+                in_benchmark = self.bench.lookup(p["query"]) is not None
+            else:
+                in_benchmark = None
             out.append({"id": str(p.get("id") or ""), "label": str(p.get("label") or ""),
                         "dataset": str(p.get("dataset") or ""), "k": k, "query": p["query"],
-                        "in_benchmark": None if not self.bench.available() else truth is not None})
+                        "in_benchmark": in_benchmark, "expect_truth": not outside})
         return out
 
     def config(self) -> dict:
@@ -454,7 +462,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--answer-timeout", type=float, default=170.0, help="таймаут /answer, с (170)")
     ap.add_argument("--stub", action="store_true", help="без стенда: заглушка входа по кэшу замера")
     ap.add_argument("--stub-cache", default=str(ROOT / "cache" / "stage1"),
-                    help="кэш замера для заглушки (queries.jsonl, query_vectors.f32, naive500_title/)")
+                    help="кэш замера для заглушки (queries.jsonl, query_vectors.f32, naive500_title/, "
+                         "naive500_title_docs/ для выбора договора)")
+    ap.add_argument("--stub-ollama", default="http://127.0.0.1:11434",
+                    help="Ollama на Маке для векторов ссылки и самого вопроса у заглушки")
+    ap.add_argument("--stub-embed-cache", default=None,
+                    help="кэш векторов Ollama у заглушки (по умолчанию embeddings/ рядом с --stub-cache)")
     ap.add_argument("--stub-answer", default="answered",
                     choices=("answered", "refused", "unsupported", "busy", "invalid"),
                     help="что отвечает /answer заглушки (answered)")
@@ -474,13 +487,25 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as e:
             print(f"[showcase] заглушка: кэш замера не прочитан ({type(e).__name__}: {e})", file=sys.stderr)
             return 2
+        embed_cache = args.stub_embed_cache or str(Path(args.stub_cache).parent / "embeddings")
+        try:
+            router = stub.open_router(index, args.stub_cache, args.stub_ollama, embed_cache)
+            gate = router.threshold()
+            route_note = (f"выбор договора по {len(router.docs.docs)} договорам, гейт "
+                          + (f"{gate:g}" if gate is not None else "выключен")
+                          + f", векторы частей вопроса через Ollama {args.stub_ollama} с кэшем {embed_cache}"
+                          + ("" if stub.ollama_reachable(args.stub_ollama)
+                             else " · Ollama не отвечает: выбор договора только по векторам из кэша"))
+        except (OSError, ValueError) as e:
+            router, route_note = None, f"выбор договора выключен ({type(e).__name__}: {e})"
         key = secrets.token_hex(16)
-        stub_entry = stub.StubEntry(index, key, answer_mode=args.stub_answer)
+        stub_entry = stub.StubEntry(index, key, answer_mode=args.stub_answer, router=router)
         stub_entry.start()
         entry = Entry(url=stub_entry.url, key=("X-API-Key", key), timeout_search=args.timeout,
                       timeout_answer=args.answer_timeout)
         print(f"[showcase] заглушка входа {stub_entry.url}: {len(index.points)} кусков, "
               f"{len(index.queries)} вопросов, {time.perf_counter() - t0:.1f} с", file=sys.stderr)
+        print(f"[showcase] заглушка: {route_note}", file=sys.stderr)
     else:
         entry = Entry(url=args.entry, ca=args.ca, key_file=args.key_header_file,
                       timeout_search=args.timeout, timeout_answer=args.answer_timeout)
@@ -511,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     code, nums = app.numbers()
     for p in (nums.get("view") or {}).get("problems") or []:
         print(f"[showcase] numbers.json: {p}", file=sys.stderr)
-    missing = [p["id"] for p in app.presets() if p["in_benchmark"] is False]
+    missing = [p["id"] for p in app.presets() if p["in_benchmark"] is False and p["expect_truth"]]
     if missing:
         print(f"[showcase] пресетов нет в наборе: {', '.join(missing)}", file=sys.stderr)
     sys.stderr.flush()
