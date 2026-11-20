@@ -1,9 +1,9 @@
 {
-  "about": "Числа для доски ролика (2:50–3:00) и полосы качества на странице поиска. Только замеры 19.11.2026 на пересобранном стенде; null значит «не измерено», на экране pending. Строки идут в кадр по-английски. Формат описан в showcase/numbers.py.",
+  "about": "Числа для доски ролика (2:50–3:00) и полосы качества на странице поиска. Только замеры 19–20.11.2026 на стенде (20.11 после выбора договора в сервисе); null значит «не измерено», на экране pending. Строки идут в кадр по-английски. Формат описан в showcase/numbers.py.",
   "schema": "showcase-numbers/1",
   "measured_on": "2026-11-19",
   "title": "Kubernetes + Qdrant",
-  "subtitle": "Measured on the stand · 19 Nov 2026",
+  "subtitle": "Measured on the stand · 19 and 20 Nov 2026",
   "caption": "3 VMs + observer on one laptop · numbers for this hardware",
   "hide_pending": false,
   "quality": {
@@ -19,9 +19,14 @@
         "value": 51.8
       },
       {
-        "id": "ours",
-        "label": "Our method, document title and section in every chunk",
+        "id": "title",
+        "label": "Document title and section in every chunk",
         "value": 82.6
+      },
+      {
+        "id": "ours",
+        "label": "Our method, plus picking the contract first",
+        "value": 89.4
       },
       {
         "id": "paper",
@@ -29,7 +34,7 @@
         "value": 63.5
       }
     ],
-    "caveat": "Same 776 questions and bge-m3 model. The method adds 31 points."
+    "caveat": "Same 776 questions and bge-m3 model. The title adds 31 points, picking the contract 7 more."
   },
   "tiles": [
     {
@@ -46,7 +51,7 @@
       "facts": [
         {
           "label": "requests",
-          "value": 3462
+          "value": 3439
         },
         {
           "label": "retried",
@@ -54,12 +59,12 @@
         },
         {
           "label": "cluster marked the machine dead after",
-          "value": 22,
+          "value": 19,
           "unit": "s"
         },
         {
           "label": "search moved to live machines after",
-          "value": 53,
+          "value": 49,
           "unit": "s"
         }
       ]
@@ -73,7 +78,7 @@
       "facts": [
         {
           "label": "requests",
-          "value": 1575
+          "value": 1498
         },
         {
           "label": "retried",
@@ -103,17 +108,17 @@
       "facts": [
         {
           "label": "all pods on the new model in",
-          "value": 0.8,
+          "value": 0.4,
           "unit": "s"
         },
         {
           "label": "rollback in",
-          "value": 0.8,
+          "value": 0.9,
           "unit": "s"
         },
         {
           "label": "requests under load",
-          "value": 1353
+          "value": 4368
         },
         {
           "label": "pods that refused the mislabeled vectors",
@@ -210,13 +215,13 @@
     {
       "id": "latency-p95",
       "title": "Latency under load",
-      "value": 33,
+      "value": 32,
       "unit": "ms p95 at 40 requests per second",
       "tone": "neutral",
       "facts": [
         {
           "label": "p50",
-          "value": 24,
+          "value": 25,
           "unit": "ms"
         },
         {
@@ -225,11 +230,11 @@
           "unit": "ms"
         },
         {
-          "label": "vectors searched",
-          "value": 1000000
+          "label": "requests in a minute, no errors",
+          "value": 2850
         }
       ],
-      "note": "Most of it is embedding the question on the laptop"
+      "note": "Contract picked first. Most of the time is embedding the question on the laptop"
     },
     {
       "id": "vector-limit",

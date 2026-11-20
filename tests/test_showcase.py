@@ -222,8 +222,8 @@ class NumbersTest(unittest.TestCase):
             return [(f["prefix"], f["value"], f["unit"]) for f in self.tiles[tid]["facts"]]
         t = self.tiles["one-machine-off"]
         self.assertEqual((t["state"], t["value"]), ("measured", "0"))
-        self.assertEqual(facts("one-machine-off"), [("", "3,462", ""), ("", "1", ""), ("", "22", "s"), ("", "53", "s")])
-        self.assertEqual((self.tiles["two-machines-off"]["value"], facts("two-machines-off")), ("0", [("", "1,575", ""), ("", "2", "")]))
+        self.assertEqual(facts("one-machine-off"), [("", "3,439", ""), ("", "1", ""), ("", "19", "s"), ("", "49", "s")])
+        self.assertEqual((self.tiles["two-machines-off"]["value"], facts("two-machines-off")), ("0", [("", "1,498", ""), ("", "2", "")]))
         self.assertEqual((self.tiles["writes-during-failure"]["value"], facts("writes-during-failure")),
                          ("0", [("", "1,489", "")]))
         pod = self.tiles["infected-pod"]
@@ -233,14 +233,15 @@ class NumbersTest(unittest.TestCase):
         self.assertEqual((self.tiles["image-scan"]["value"], facts("image-scan")), ("0", [("", "7", "")]))
         q = self.view["quality"]
         self.assertEqual([(r["id"], r["value"], r["bar"]) for r in q["rows"]],
-                         [("plain", "51.8", "51.8%"), ("ours", "82.6", "82.6%"), ("paper", "63.5", "63.5%")])
+                         [("plain", "51.8", "51.8%"), ("title", "82.6", "82.6%"), ("ours", "89.4", "89.4%"),
+                          ("paper", "63.5", "63.5%")])
         self.assertEqual((q["metric"], q["state"]), ("recall@64", "measured"))
         self.assertIn("31 points", q["caveat"])
         self.assertEqual(self.tiles["quality"]["state"], "measured")
 
     def test_measured_on_the_stand(self):
         # 19.11: полный LegalBench-RAG (eval/run_full.sh) и предел на синтетике (eval/results/limit.md)
-        want = {"full-corpus": "159,767", "vector-limit": "1,000,000", "latency-p95": "33"}
+        want = {"full-corpus": "159,767", "vector-limit": "1,000,000", "latency-p95": "32"}
         for tid, value in want.items():
             self.assertEqual((self.tiles[tid]["state"], self.tiles[tid]["value"]), ("measured", value), tid)
 
@@ -483,10 +484,10 @@ class AnswerTest(ShowcaseCase):
 Q_OUT = "Consider the Lease Agreement between Nobody Holdings and Nowhere Estates; What is the monthly rent?"
 ROUTE_A = {"used": True, "reference": "Consider the License Agreement of Acme", "question": "When does the term end?",
            "document": {"file": FILE_A, "title": "Acme License", "score": 0.7162},
-           "gate": {"score": 0.6271, "threshold": 0.586, "passed": True, "closest": "Acme License"}}
+           "gate": {"score": 0.6271, "threshold": 0.585, "passed": True, "closest": "Acme License"}}
 ROUTE_OUT = {"used": True, "reference": "Consider the Lease Agreement between Nobody Holdings and Nowhere Estates",
              "question": "What is the monthly rent?", "document": None,
-             "gate": {"score": 0.4516, "threshold": 0.586, "passed": False, "closest": "Beta Notes"}}
+             "gate": {"score": 0.4516, "threshold": 0.585, "passed": False, "closest": "Beta Notes"}}
 
 
 class RouteProxyTest(ShowcaseCase):
@@ -926,7 +927,7 @@ class StubRouteTest(unittest.TestCase):
         self.assertEqual((route["document"]["file"], route["document"]["title"]), ("cuad/acme.txt", "Acme License"))
         self.assertEqual(route["gate"], {"score": 0.9, "threshold": routing.gate_min("bge-m3"), "passed": True,
                                          "closest": "Acme License"})
-        self.assertEqual(route["gate"]["threshold"], 0.586)
+        self.assertEqual(route["gate"]["threshold"], routing.gate_min("bge-m3"))
         self.assertNotIn("not_in_base", body)
         self.assertEqual({h["file"] for h in body["results"]}, {"cuad/acme.txt"})
         self.assertEqual([h["span"][0] for h in body["results"][:2]], [1000, 500])  # пункт, а не преамбула

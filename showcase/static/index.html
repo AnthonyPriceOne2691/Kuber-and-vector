@@ -441,6 +441,11 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     renderRequest(d, r, which);
   }
 
+  // названия в базе взяты из имён файлов бенчмарка, там пробел записан как %20: в кадр без него
+  function readable(t) {
+    if (!t) return t;
+    try { return decodeURIComponent(t); } catch (e) { return t; }
+  }
   // --- выбор договора: какой договор выбрал сервис или почему отказал ------------------------
   function hideRoute() {
     $("#route").hidden = true;
@@ -451,7 +456,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     scene.dataset.route = refused ? "not_in_base" : doc ? "contract" : "none";
     $("#route").hidden = refused || !doc;
     if (refused || !doc) return;
-    $("#route-doc").textContent = doc.title || doc.file || "Untitled contract";
+    $("#route-doc").textContent = readable(doc.title) || doc.file || "Untitled contract";
     $("#route-score").textContent = `match ${fmtScore(doc.score)}`;
   }
   function renderRefusal(route, which) {
@@ -460,8 +465,8 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     card.id = "refusal";
     card.append(h("div", "refusal-title", "This contract is not in the database"));
     const sub = h("div", "refusal-sub");
-    if (g.closest) sub.append(h("span", "", "Closest in the base"), h("span", "closest", g.closest));
-    if (typeof g.score === "number") sub.append(h("span", "num", `match ${fmtScore(g.score)}`));
+    if (g.closest) sub.append(h("span", "", "Closest in the base"), h("span", "closest", readable(g.closest)));
+    if (typeof g.score === "number") sub.append(h("span", "num", `gate score ${fmtScore(g.score)}`));
     if (typeof g.threshold === "number") sub.append(h("span", "num", `threshold ${fmtScore(g.threshold)}`));
     if (sub.children.length) card.append(sub);
     if (which === "answer") card.append(h("div", "refusal-note", "The model was not called"));
@@ -491,7 +496,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     el.id = `hit-${rank}`;
     el.dataset.match = a.match === true ? "yes" : a.match === false ? "no" : "none";
     const top = h("div", "hit-top");
-    top.append(h("span", "rank", String(rank)), h("span", "doc", hit.document || hit.file || "Untitled document"));
+    top.append(h("span", "rank", String(rank)), h("span", "doc", readable(hit.document) || hit.file || "Untitled document"));
     if (a.match === true) { const b = h("span", "badge yes match"); b.append(h("i", "", "✓"), h("span", "", "Matches annotation")); top.append(b); }
     else if (a.match === false) top.append(h("span", "badge no", "No overlap"));
     const addr = h("div", "addr");

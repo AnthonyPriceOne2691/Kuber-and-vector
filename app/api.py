@@ -39,6 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -79,7 +80,13 @@ PAYLOAD = ["title", "section", "file", "start", "end", "text"]
 # выбор договора: параметры подобраны на половине A мини (eval/results/routing.md)
 ROUTE = os.environ.get("ROUTE", "1") != "0"
 ROUTE_DOCS = int(os.environ.get("ROUTE_DOCS", "5"))            # сколько договоров маршрута держать в запасе
-ROUTE_MIX = float(os.environ.get("ROUTE_MIX", "0.25"))         # доля всего вопроса в балле куска
+# доля всего вопроса в балле куска. Векторизация на Маке это узкое место (замер 20.11): один текст
+# 20 мс, два 28, три 45. С тремя текстами на запрос нагрузка 40 запросов в секунду дала 96 % ошибок,
+# с двумя (ссылка из кэша) 88 %. Поэтому 0: на запрос уходит один текст, сам вопрос, ссылка на договор
+# из кэша пода. На половине A это равноценно (среднее по k 59,6 против 59,8 при 0,25); вживую на 776
+# вопросах recall@8 64,6 против 64,5, recall@64 89,4 против 90,6 (eval/results/live.md).
+ROUTE_MIX = float(os.environ.get("ROUTE_MIX", "0"))
+REF_CACHE_SIZE = int(os.environ.get("REF_CACHE_SIZE", "4096"))  # векторы ссылок на договор в памяти пода
 ROUTE_NEIGHBOR = float(os.environ.get("ROUTE_NEIGHBOR", "0.5"))  # μ: вес лучшего соседа куска
 DOCS_RECHECK = float(os.environ.get("DOCS_RECHECK", "30"))     # нет коллекции документов: проверить снова через
 SEARCH_MAX_K = 64  # как у замера LegalBench-RAG (k до 64)
@@ -318,10 +325,44 @@ def _search_call(path: str, body: dict) -> tuple[dict, int]:
 _DOCS_MISSING: dict[str, float] = {}  # коллекция документов → до какого момента её не спрашивать
 
 
-def _routed(pair: binding.Pair, vectors: list[list[float]], parts: tuple[str, str],
-            k: int) -> tuple[list[dict], dict, int] | None:
+_REF_CACHE: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
+_REF_LOCK = threading.Lock()
+
+
+def _ref_cached(model: str, text: str) -> list[float] | None:
+    with _REF_LOCK:
+        v = _REF_CACHE.get((model, text))
+        if v is not None:
+            _REF_CACHE.move_to_end((model, text))
+        return v
+
+
+def _ref_store(model: str, text: str, v: list[float]) -> None:
+    with _REF_LOCK:
+        _REF_CACHE[(model, text)] = v
+        _REF_CACHE.move_to_end((model, text))
+        while len(_REF_CACHE) > REF_CACHE_SIZE:
+            _REF_CACHE.popitem(last=False)
+
+
+def _part_vectors(model: str, q: str, parts: tuple[str, str]) -> tuple[list[float] | None, list[float], list[float]]:
+    """Векторы (весь вопрос или None, ссылка, сам вопрос) одним вызовом Ollama. Ссылка на договор
+    повторяется от вопроса к вопросу, её вектор берётся из кэша пода; сам вопрос считается всегда.
+    Весь вопрос нужен только при ROUTE_MIX > 0."""
+    ref, ask = parts
+    ref_v = _ref_cached(model, ref)
+    texts = ([q] if ROUTE_MIX > 0 else []) + ([ref] if ref_v is None else []) + [ask]
+    vecs = [routing.unit(v) for v in _embed(model, [embed_models.query_text(model, t) for t in texts])]
+    full_v = vecs.pop(0) if ROUTE_MIX > 0 else None
+    if ref_v is None:
+        ref_v = vecs.pop(0)
+        _ref_store(model, ref, ref_v)
+    return full_v, ref_v, vecs[0]
+
+
+def _routed(pair: binding.Pair, full: list[float] | None, ref: list[float], ask: list[float],
+            parts: tuple[str, str], k: int) -> tuple[list[dict], dict, int] | None:
     """Поиск с выбором договора: (куски, маршрут, попытка). None, если коллекции документов нет."""
-    full, ref, ask = (routing.unit(v) for v in vectors)
     docs = routing.docs_collection(pair.collection)
     if _DOCS_MISSING.get(docs, 0.0) > time.monotonic():
         return None
@@ -349,7 +390,7 @@ def _routed(pair: binding.Pair, vectors: list[list[float]], parts: tuple[str, st
     top = found[0]
     route["document"] = {"file": top["payload"]["file"], "title": top["payload"].get("title"),
                          "score": round(top["score"], 4)}
-    query = routing.mix(full, ask, ROUTE_MIX)
+    query = routing.mix(full, ask, ROUTE_MIX) if full is not None else ask
     chosen: list[tuple[float, object]] = []
     for d in found:  # договор за договором, пока кусков меньше k
         body = {"query": query, "using": "dense", "limit": int(d["payload"].get("chunks") or 2000),
@@ -385,23 +426,30 @@ def _retrieve(q: str, k: int, pair: binding.Pair | None = None) -> tuple[list[di
     выбор договора выключен или коллекции документов нет; тогда поиск по всей коллекции."""
     pair = pair or _serving()[0]
     parts = routing.split_question(q) if ROUTE and SEARCH_MODE == "dense" else None
-    texts = [q, *parts] if parts else [q]
     t0 = time.perf_counter()
-    try:
-        vectors = _embed(pair.model, [embed_models.query_text(pair.model, t) for t in texts])
-    except Exception:
-        raise Unavailable("embedder unavailable")
-    t1 = time.perf_counter()
-    METRICS.observe("search_stage_seconds", {"stage": "embed"}, t1 - t0)
+    vector = None
     if parts:
-        routed = _routed(pair, vectors, parts, k)
+        try:
+            full, ref, ask = _part_vectors(pair.model, q, parts)
+        except Exception:
+            raise Unavailable("embedder unavailable")
+        t1 = time.perf_counter()
+        METRICS.observe("search_stage_seconds", {"stage": "embed"}, t1 - t0)
+        routed = _routed(pair, full, ref, ask, parts, k)
         if routed is not None:
             hits, route, attempts = routed
             t2 = time.perf_counter()
             METRICS.observe("search_stage_seconds", {"stage": "qdrant"}, t2 - t1)
             METRICS.inc("search_route_total", {"result": "not_in_base" if _refused_by_gate(route) else "routed"})
             return hits, {"embed": _ms(t1 - t0), "search": _ms(t2 - t1)}, attempts, route
-    vector = vectors[0]
+        vector = full  # коллекции документов нет: прежний поиск по всему вопросу
+    if vector is None:
+        try:
+            vector = _embed(pair.model, [embed_models.query_text(pair.model, q)])[0]
+        except Exception:
+            raise Unavailable("embedder unavailable")
+    t1 = time.perf_counter()
+    METRICS.observe("search_stage_seconds", {"stage": "embed"}, t1 - t0)
     if SEARCH_MODE == "hybrid":
         body = {"prefetch": [{"query": vector, "using": "dense", "limit": PREFETCH},
                              {"query": bm25.query_sparse(q), "using": "bm25", "limit": PREFETCH}],

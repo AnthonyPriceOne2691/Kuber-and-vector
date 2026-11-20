@@ -45,7 +45,7 @@ SERVED_BY = {"node": "stub", "pod": "local"}
 MODEL = "bge-m3"  # модель векторов кэша замера (cache/stage1/meta.json)
 # выбор договора: значения сервиса по умолчанию (app/api.py), подобраны на половине A мини
 ROUTE_DOCS = 5        # сколько договоров маршрута держать в запасе
-ROUTE_MIX = 0.25      # доля всего вопроса в балле куска
+ROUTE_MIX = 0.0       # доля всего вопроса в балле куска, как в сервисе (app/api.py, ROUTE_MIX)
 ROUTE_NEIGHBOR = 0.5  # μ: вес лучшего соседа куска
 NOT_IN_BASE = "this contract is not in the database"  # как у сервиса
 EMBED_TIMEOUT = 8     # с на векторы у Ollama: витрина ждёт ответ входа 10 с (server.py --timeout)

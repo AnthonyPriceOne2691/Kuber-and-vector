@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from collections import OrderedDict
 from unittest import mock
 
 from app import routing
@@ -123,7 +124,7 @@ class RoutedSearchTest(unittest.TestCase):
         p = mock.patch.multiple(api, QDRANT_URL=self.qdrant.url, OLLAMA_URL=self.ollama.url, KEY_FILE=key_file,
                                 COLLECTION="contracts_rf2", SEARCH_MODE="dense", SEARCH_ALIAS="", ROUTE=True,
                                 QDRANT_LOCAL_URL="", QDRANT_CONNECT_TIMEOUT=0.3, QDRANT_READ_TIMEOUT=0.3,
-                                QDRANT_ATTEMPTS=2, _DOCS_MISSING={})
+                                QDRANT_ATTEMPTS=2, _DOCS_MISSING={}, _REF_CACHE=OrderedDict(), ROUTE_MIX=0.0)
         p.start()
         self.addCleanup(p.stop)
         e = mock.patch.dict(os.environ, {"GATE_MIN": ""})
@@ -147,11 +148,21 @@ class RoutedSearchTest(unittest.TestCase):
         self.assertEqual({"cuad/acme.txt"}, {h["file"] for h in body["results"]})
         self.assertEqual([1000, 500], [h["span"][0] for h in body["results"][:2]])  # пункт, а не преамбула
         self.assertEqual("Acme License text at 1000", body["results"][0]["text"])
-        self.assertEqual(["Consider the Acme License between Acme and Beta; Which law governs?", REF_A, ASK_A],
-                         self.ollama.json_bodies()[-1]["input"])  # одна поездка в Ollama за три вектора
+        self.assertEqual([REF_A, ASK_A], self.ollama.json_bodies()[-1]["input"])  # одна поездка в Ollama
         chunk_queries = [b for b in self.qdrant.json_bodies() if isinstance(b, dict) and "filter" in b]
         self.assertEqual([{"key": "file", "match": {"value": "cuad/acme.txt"}}], chunk_queries[0]["filter"]["must"])
         self.assertTrue(chunk_queries[0]["params"]["exact"])
+
+    def test_reference_vector_is_cached(self):
+        self.search(f"{REF_A}; {ASK_A}")
+        self.search(f"{REF_A}; {ASK_A}")
+        self.assertEqual([ASK_A], self.ollama.json_bodies()[-1]["input"])  # ссылка из кэша, один текст
+
+    def test_mix_with_whole_question_embeds_it(self):
+        with mock.patch.object(api, "ROUTE_MIX", 0.25):
+            body = self.search(f"{REF_A}; {ASK_A}")
+        self.assertEqual([f"{REF_A}; {ASK_A}", REF_A, ASK_A], self.ollama.json_bodies()[-1]["input"])
+        self.assertEqual([1000, 500], [h["span"][0] for h in body["results"][:2]])
 
     def test_next_contract_fills_when_first_is_short(self):
         body = self.search(f"{REF_A}; {ASK_A}", k=5)
@@ -204,6 +215,7 @@ class NoDocsCollectionTest(RoutedSearchTest):
     # тесты маршрута из родителя здесь неприменимы
     test_contract_chosen_and_clause_found = test_next_contract_fills_when_first_is_short = None
     test_contract_not_in_base = test_answer_refused_without_model = test_without_gate_threshold = None
+    test_reference_vector_is_cached = test_mix_with_whole_question_embeds_it = None
 
 
 if __name__ == "__main__":
