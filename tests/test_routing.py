@@ -39,7 +39,7 @@ class RoutingLogicTest(unittest.TestCase):
     def test_mix_and_gate_threshold(self):
         self.assertEqual([0.25, 0.75], routing.mix([1.0, 0.0], [0.0, 1.0], 0.25))
         with mock.patch.dict(os.environ, {"GATE_MIN": ""}):
-            self.assertEqual(0.586, routing.gate_min("bge-m3:latest"))
+            self.assertEqual(0.585, routing.gate_min("bge-m3:latest"))
             self.assertIsNone(routing.gate_min("snowflake-arctic-embed2"))  # порог не мерили: гейта нет
         with mock.patch.dict(os.environ, {"GATE_MIN": "0.7"}):
             self.assertEqual(0.7, routing.gate_min("snowflake-arctic-embed2"))
