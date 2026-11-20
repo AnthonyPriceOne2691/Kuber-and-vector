@@ -5,8 +5,10 @@
 # коллекцию, чьи векторы сделаны не той моделью, что подписана в реестре; поды её не берут и отвечают
 # прежней парой. Нагрузка и все проверки идут через вход, как у пользователя.
 #   deploy/scenes/model-switch.sh
-#   RATE=20 WARM=15 HOLD=20 TAIL=10 по умолчанию; K=8 PER_DATASET=25 (качество: recall@K на первых
-#   PER_DATASET вопросах каждого набора LegalBench-RAG-mini, эталон из data/legalbenchrag, живьём через вход)
+#   RATE=20 WARM=15 HOLD=20 TAIL=10 по умолчанию; K=8 PER_DATASET=194 (качество: recall@K на первых
+#   PER_DATASET вопросах каждого набора LegalBench-RAG-mini, эталон из data/legalbenchrag, живьём через вход).
+#   194 это весь мини-набор, 776 вопросов: 20.11 выборка по 25 на набор (100 вопросов) показала arctic хуже
+#   bge-m3 на 6,6 п.п. recall@8, а на всех 776 вопросах arctic лучше (eval/results/live.md); 100 мало.
 #   ALIAS=contracts BASE=contracts_rf2 NEW=contracts_rf2_arctic
 #   BAD=contracts_mislabeled BAD_SRC=cache/stage1_arctic/naive500_title BAD_POINTS=1000 TRAP_AS=bge-m3:
 #   ловушка из первых BAD_POINTS кусков набора arctic, подписанная в реестре моделью TRAP_AS
@@ -19,7 +21,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 PY="${PY:-/opt/homebrew/bin/python3}"
 RATE="${RATE:-20}"; WARM="${WARM:-15}"; HOLD="${HOLD:-20}"; TAIL="${TAIL:-10}"
-K="${K:-8}"; PER_DATASET="${PER_DATASET:-25}"
+K="${K:-8}"; PER_DATASET="${PER_DATASET:-194}"
 ALIAS="${ALIAS:-contracts}"; BASE="${BASE:-contracts_rf2}"; NEW="${NEW:-contracts_rf2_arctic}"
 BAD="${BAD:-contracts_mislabeled}"; BAD_SRC="${BAD_SRC:-cache/stage1_arctic/naive500_title}"
 BAD_POINTS="${BAD_POINTS:-1000}"; TRAP_AS="${TRAP_AS:-bge-m3}"
