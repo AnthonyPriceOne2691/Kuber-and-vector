@@ -260,7 +260,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
         <dl class="kv" id="request-kv" hidden></dl>
       </section>
       <section class="card side quality" id="quality" hidden>
-        <div class="label" id="quality-title"></div>
+        <div class="label" id="quality-heading"></div>
         <div class="side-sub" id="quality-sub"></div>
         <div class="q-rows" id="quality-rows"></div>
         <p class="q-note" id="quality-note"></p>
@@ -638,7 +638,7 @@ footer span { overflow: hidden; text-overflow: ellipsis; }
     $("#caption").textContent = (v && v.caption) || "";
     if (!q || !q.rows.length) { box.hidden = true; return; }
     box.hidden = false;
-    $("#quality-title").textContent = [q.title, q.benchmark].filter(Boolean).join(" · ");
+    $("#quality-heading").textContent = [q.title, q.benchmark].filter(Boolean).join(" · ");
     $("#quality-sub").textContent = [q.metric, q.search].filter(Boolean).join(" · ");
     const lead = q.rows.find((r) => r.id === "ours") || q.rows[0];  // выделяем наш метод, где бы он ни стоял
     const rows = q.rows.map((row, i) => {
